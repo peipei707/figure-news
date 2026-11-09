@@ -8,11 +8,10 @@ on:
     branches: [main]
     paths:
       - scrape.py
+      - build_site.py
+      - page/**
       - requirements.txt
       - .github/workflows/daily.yml
-
-permissions:
-  contents: write
 
 concurrency:
   group: daily
@@ -22,6 +21,8 @@ jobs:
   scrape:
     runs-on: ubuntu-latest
     timeout-minutes: 40
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v5
 
@@ -49,3 +50,27 @@ jobs:
           git commit -m "Daily update $(TZ=Asia/Shanghai date +%F)"
           git pull --rebase
           git push
+
+      # The same page as the claude.ai one, as a complete document for GitHub Pages.
+      - name: Build the web page
+        if: ${{ !cancelled() }}
+        run: python build_site.py --standalone
+
+      - uses: actions/upload-pages-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          path: build
+
+  pages:
+    needs: scrape
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

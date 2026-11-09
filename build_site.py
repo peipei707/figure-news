@@ -32,6 +32,21 @@ FIELDS = [
     "follows", "wants", "preorders", "owned", "score", "score_count", "views", "stats_date",
 ]
 FALLBACK_JPY_TO_CNY = 0.047
+SUMMARY = "每天汇总 HPOI、Good Smile 官网和 HLJ 的手办新品：价格、发售、预订期、人气和规格。"
+# claude.ai wraps the published page in this skeleton; GitHub Pages serves the file as is,
+# so --standalone adds the same skeleton (plus a description for link previews).
+STANDALONE_HEAD = (
+    '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
+    '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
+    f'<meta name="description" content="{SUMMARY}">'
+    '<meta property="og:title" content="手办新品日报">'
+    f'<meta property="og:description" content="{SUMMARY}">'
+    "<style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);"
+    "padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}"
+    "body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif}img{max-width:100%}"
+    "[hidden]{display:none!important}</style></head><body>\n"
+)
+STANDALONE_TAIL = "\n</body></html>\n"
 
 
 def jpy_to_cny(rows: list[dict[str, str]]) -> float:
@@ -49,7 +64,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Build the figure-news web page.")
     parser.add_argument("--published", default="",
                         help="comma-separated paths the artifact already has, e.g. thumbs/2026-11-09.json")
-    published = {p.strip() for p in parser.parse_args().published.split(",") if p.strip().startswith("thumbs/")}
+    parser.add_argument("--standalone", action="store_true",
+                        help="write a complete HTML document (for GitHub Pages) instead of the artifact body")
+    args = parser.parse_args()
+    published = {p.strip() for p in args.published.split(",") if p.strip().startswith("thumbs/")}
 
     with (ROOT / "data" / "items.csv").open(newline="", encoding="utf-8-sig") as f:
         rows = list(csv.DictReader(f))
@@ -83,7 +101,10 @@ def main() -> None:
         raise SystemExit("page/template.html must contain __FIGURE_DATA__ exactly once")
 
     (OUT / "thumbs").mkdir(parents=True, exist_ok=True)
-    (OUT / "index.html").write_text(template.replace("__FIGURE_DATA__", payload), encoding="utf-8")
+    page = template.replace("__FIGURE_DATA__", payload)
+    if args.standalone:
+        page = STANDALONE_HEAD + page + STANDALONE_TAIL
+    (OUT / "index.html").write_text(page, encoding="utf-8")
     for old in (OUT / "thumbs").glob("*.json"):
         if old.stem not in bundles:
             old.unlink()

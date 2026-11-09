@@ -4,7 +4,9 @@
 
 **最新一期：[2026-11-09](daily/2026-11-09.md)（151 件）**
 
-**网页版：[手办新品日报](https://claude.ai/artifact/MpGg62ocB5aBF7wCvRubAf)**（claude.ai 私有页面，最近 30 天，每天 9:15 左右自动刷新）
+**公开网页：[https://peipei707.github.io/figure-news/](https://peipei707.github.io/figure-news/)**（GitHub Pages，每天抓取后自动更新，最近 30 天）
+
+claude.ai 版本：[手办新品日报](https://claude.ai/artifact/MpGg62ocB5aBF7wCvRubAf)（每天 9:15 左右刷新）
 
 ## 上次运行
 
