@@ -8,11 +8,11 @@
 
 ## 上次运行
 
-2026-11-09 16:21（北京时间）
+2026-11-09 16:38（北京时间）
 
 | 来源 | 结果 | 新增 | 备注 |
 |---|---|---|---|
-| HPOI | ✅ 正常 | 1 |  |
+| HPOI | ✅ 正常 | 0 |  |
 | Good Smile 官网 | ✅ 正常 | 0 |  |
 | HLJ | ✅ 正常 | 0 |  |
 
@@ -42,6 +42,11 @@
 | preorder_start / preorder_end | 预订开始 / 截止 |
 | status | 预订中、再贩、官网限定、旧品补录等 |
 | rating / adult | HPOI 的观感等级 / 成人向标记（1 = 是） |
+| size / material / sculptor / painter | 尺寸 / 材质 / 原型 / 涂装 |
+| bonus / progress / extra | 特典 / HPOI 进程（开订、出荷等最新动态）/ 其他信息（如 HLJ 取消截止日） |
+| follows / wants / preorders / owned | HPOI 的关注 / 想买 / 预订 / 已入人数 |
+| score / score_count / views | HPOI 评分 / 评分人数 / 访问量 |
+| stats_date | 人气数据的读取日期（收录当天、第 2 天、第 7 天各读一次） |
 | jan | JAN 条码 |
 | image_url / thumb | 原图链接 / 缩略图路径 |
 
