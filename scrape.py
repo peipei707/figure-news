@@ -17,6 +17,7 @@ instead of trying to get past it.
 
 from __future__ import annotations
 
+import argparse
 import csv
 import io
 import json
@@ -72,7 +73,18 @@ CSV_FIELDS = [
     "first_seen", "source", "id", "name", "name_alt", "maker", "series", "character", "category",
     "scale", "price", "currency", "price_note", "release", "preorder_start",
     "preorder_end", "status", "rating", "adult", "jan", "image_url", "thumb", "url",
+    "size", "material", "sculptor", "painter", "bonus", "progress", "extra",
+    "follows", "wants", "preorders", "owned", "score", "score_count", "views", "stats_date",
 ]
+# Fields a detail page fills in; refresh_rows() copies these back onto stored rows.
+DETAIL_FIELDS = [
+    "name", "name_alt", "maker", "series", "character", "category", "scale", "price", "currency",
+    "price_note", "release", "preorder_start", "preorder_end", "rating", "adult", "jan", "image_url",
+    "size", "material", "sculptor", "painter", "bonus", "progress", "extra",
+    "follows", "wants", "preorders", "owned", "score", "score_count", "views", "stats_date",
+]
+# Days after an HPOI item is first seen when its page is read again for popularity.
+STATS_AGES = (2, 7)
 
 
 @dataclass
@@ -100,6 +112,21 @@ class Item:
     image_url: str = ""
     thumb: str = ""
     first_seen: str = ""
+    size: str = ""
+    material: str = ""
+    sculptor: str = ""
+    painter: str = ""
+    bonus: str = ""  # 特典
+    progress: str = ""  # HPOI 进程: latest events, newest first
+    extra: str = ""  # other facts, "label：value；label：value"
+    follows: str = ""  # HPOI 关注
+    wants: str = ""  # HPOI 想买
+    preorders: str = ""  # HPOI 预订
+    owned: str = ""  # HPOI 已入
+    score: str = ""  # HPOI rating out of 5
+    score_count: str = ""
+    views: str = ""  # HPOI 条目访问 bucket, e.g. 少于1000
+    stats_date: str = ""  # when the HPOI counts were read
     thumb_src: str = ""  # where the thumbnail is downloaded from; not stored
 
     def row(self) -> dict[str, str]:
@@ -361,8 +388,59 @@ def hpoi_list(html: str) -> list[Item]:
     return items
 
 
+def hpoi_info(soup: BeautifulSoup) -> dict[str, str]:
+    """The 名称/出货/原型/... list; a row with an empty label continues the one above."""
+    out: dict[str, str] = {}
+    last = None
+    for row in soup.select(".hpoi-infoList-item"):
+        label, value = row.find("span"), row.find("p")
+        label = clean(label.get_text()) if label else ""
+        value = clean(value.get_text(" ")) if value else ""
+        if label:
+            last = label
+            out[label] = value
+        elif last and value:
+            out[last] += "；" + value
+    return out
+
+
+def hpoi_stats(soup: BeautifulSoup, it: Item) -> None:
+    """Popularity counts, rating, visits and the 进程 timeline."""
+    counts = {}
+    for button in soup.select(".hpoi-collection-box button[value]"):
+        badge = button.select_one(".badge")
+        counts[button["value"]] = re.sub(r"\D", "", badge.get_text()) if badge else ""
+    it.follows = counts.get("care") or "0"
+    it.wants = counts.get("want") or "0"
+    it.preorders = counts.get("preorder") or "0"
+    it.owned = counts.get("buy") or "0"
+    text = clean(soup.get_text(" "))
+    score = re.search(r"评分：\s*([\d.]+)\s*共有(\d+)个评分", text)
+    it.score, it.score_count = (score.group(1), score.group(2)) if score else ("", "0")
+    views = re.search(r"条目访问：\s*(\S+)", text)
+    it.views = views.group(1) if views else ""
+    events = []
+    for slide in soup.select(".hpoi-process-box .items-process"):
+        spans = [clean(s.get_text()) for s in slide.select(".item-time span")]
+        detail = slide.select_one(".item-detail")
+        desc = clean(detail.get_text(" ")) if detail else ""
+        if spans and spans[0]:
+            events.append(f"{spans[0]}：{desc}" if desc else spans[0])
+    it.progress = " | ".join(events[:3])
+
+
 def hpoi_detail(html: str, it: Item) -> None:
-    prod = ld_product(BeautifulSoup(html, "html.parser"))
+    soup = BeautifulSoup(html, "html.parser")
+    hpoi_stats(soup, it)
+    labels = hpoi_info(soup)
+    it.size = labels.get("尺寸", "")
+    it.material = labels.get("材质", "")
+    it.sculptor = labels.get("原型", "")
+    it.painter = labels.get("涂装", "")
+    it.extra = "；".join(f"{k}：{labels[k]}" for k in ("发行", "原画") if labels.get(k))
+    bonus = soup.find(string=re.compile(r"^\s*特典[：:]"))
+    it.bonus = clean(re.sub(r"^\s*特典[：:]", "", bonus)) if bonus else ""
+    prod = ld_product(soup)
     if not prod:
         return
     info = key_values(prod.get("description", ""))
@@ -372,7 +450,7 @@ def hpoi_detail(html: str, it: Item) -> None:
     it.series = info.get("作品", "")
     it.character = info.get("角色", "")
     it.category = " · ".join(x for x in (clean(prod.get("category")), info.get("系列", "")) if x)
-    it.scale = info.get("比例", "")
+    it.scale = info.get("比例", "") or labels.get("比例", "")
     it.image_url = clean(first(prod.get("image")) or "")
     price_text = info.get("定价", "")
     offer = first(prod.get("offers")) or {}
@@ -444,7 +522,12 @@ def gsc_detail(html: str, it: Item) -> None:
     it.series = specs.get("作品名", "")
     it.character = specs.get("キャラクター名") or specs.get("キャラクター") or ""
     it.maker = specs.get("メーカー") or it.maker
+    it.sculptor = specs.get("原型制作", "")
+    it.painter = specs.get("彩色", "")
     spec = specs.get("仕様", "")
+    size = re.search(r"(全高|全長|高さ|サイズ)[：:]?\s*約?\s*[\d.]+\s*(mm|cm)", spec)
+    it.size = size.group(0) if size else ""
+    it.extra = f"仕様：{spec}" if spec else ""
     scale = re.search(r"1/\d+", spec)
     it.scale = scale.group(0) if scale else ("ノンスケール" if "ノンスケール" in spec else "")
     for label, value in specs.items():
@@ -502,13 +585,16 @@ def hlj_detail(html: str, it: Item) -> None:
         it.currency = currency_of(offer.get("priceCurrency")) if it.price else ""
     for li in soup.find_all("li"):
         text = clean(li.get_text(" "))
-        m = re.fullmatch(r"(Release Date|Order Deadline|Series|Manufacturer)\s*:\s*(.+)", text)
+        m = re.fullmatch(r"(Release Date|Order Deadline|Cancellation Deadline|Series|Manufacturer)\s*:\s*(.+)", text)
         if m:
             key, value = m.groups()
             if key == "Release Date":
                 it.release = month_of(value)
             elif key == "Order Deadline":
                 it.preorder_end = value
+            elif key == "Cancellation Deadline":
+                when = re.match(r"\d{4}-\d{2}-\d{2}", value)
+                it.extra = f"取消截止：{when.group(0) if when else value}"
             elif key == "Series":
                 it.series = value
             else:
@@ -620,8 +706,10 @@ def run_source(src: Source, fetcher: Fetcher, known: set[tuple[str, str]], today
             break
         except Exception as exc:  # keep what the listing gave us
             log(f"   detail {src.key} {it.id}: {type(exc).__name__}: {exc}")
-        if src.key == "HPOI" and is_backfill(it.release, today):
-            it.status = BACKFILL
+        if src.key == "HPOI":
+            it.stats_date = today.isoformat()
+            if is_backfill(it.release, today):
+                it.status = BACKFILL
         save_thumb(fetcher, it)
         it.first_seen = today.isoformat()
         done.append(it)
@@ -630,6 +718,42 @@ def run_source(src: Source, fetcher: Fetcher, known: set[tuple[str, str]], today
     if left and not blocked:
         note = f"还有 {left} 件留到下次"
     return done, {"status": "blocked" if blocked else "ok", "new": len(done), "note": note}
+
+
+SOURCE_BY_KEY = {src.key: src for src in SOURCE_DEFS}
+
+
+def age_days(row: dict[str, str], today: date) -> int:
+    try:
+        return (today - date.fromisoformat(row["first_seen"])).days
+    except ValueError:
+        return -1
+
+
+def refresh_rows(fetcher: Fetcher, rows: list[dict[str, str]], pick: Callable[[dict[str, str]], bool],
+                 today: date) -> int:
+    """Read the detail page of each picked row again and keep what it now says."""
+    done = 0
+    for row in rows:
+        if not pick(row):
+            continue
+        it = Item(**{k: row.get(k, "") for k in CSV_FIELDS})
+        try:
+            SOURCE_BY_KEY[row["source"]].parse_detail(fetcher.text(it.url), it)
+        except Blocked as exc:
+            log(f"   refresh stopped: {exc}")
+            break
+        except Exception as exc:  # one bad page should not stop the rest
+            log(f"   refresh {row['source']} {row['id']}: {type(exc).__name__}: {exc}")
+            continue
+        if row["source"] == "HPOI":
+            it.stats_date = today.isoformat()
+        fresh = it.row()
+        for key in DETAIL_FIELDS:
+            if fresh[key]:
+                row[key] = fresh[key]
+        done += 1
+    return done
 
 
 # --------------------------------------------------------------------------
@@ -757,6 +881,11 @@ def render_readme(rows: list[dict[str, str]], last_run: dict) -> str:
         "| preorder_start / preorder_end | 预订开始 / 截止 |",
         "| status | 预订中、再贩、官网限定、旧品补录等 |",
         "| rating / adult | HPOI 的观感等级 / 成人向标记（1 = 是） |",
+        "| size / material / sculptor / painter | 尺寸 / 材质 / 原型 / 涂装 |",
+        "| bonus / progress / extra | 特典 / HPOI 进程（开订、出荷等最新动态）/ 其他信息（如 HLJ 取消截止日） |",
+        "| follows / wants / preorders / owned | HPOI 的关注 / 想买 / 预订 / 已入人数 |",
+        "| score / score_count / views | HPOI 评分 / 评分人数 / 访问量 |",
+        "| stats_date | 人气数据的读取日期（收录当天、第 2 天、第 7 天各读一次） |",
         "| jan | JAN 条码 |",
         "| image_url / thumb | 原图链接 / 缩略图路径 |",
         "", "## 手动运行", "",
@@ -774,7 +903,12 @@ def render_readme(rows: list[dict[str, str]], last_run: dict) -> str:
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="Collect new figures from HPOI, Good Smile and HLJ.")
+    parser.add_argument("--refresh-days", type=int, default=0, metavar="N",
+                        help="also re-read the detail page of every item first seen in the last N days")
+    args = parser.parse_args()
     now = datetime.now(BEIJING)
+    today = now.date()
     rows = load_rows()
     known = {(r["source"], r["id"]) for r in rows}
     fetcher = Fetcher()
@@ -787,6 +921,19 @@ def main() -> int:
         new_rows += [it.row() for it in items]
         log(f"   {status[src.key]}")
     rows += new_rows
+
+    just_added = {(r["source"], r["id"]) for r in new_rows}
+
+    def pick(row: dict[str, str]) -> bool:
+        if (row["source"], row["id"]) in just_added:
+            return False
+        if args.refresh_days:
+            return 0 <= age_days(row, today) < args.refresh_days
+        # Popularity grows after an announcement, so HPOI items are read again a few days on.
+        return row["source"] == "HPOI" and row["status"] != BACKFILL and age_days(row, today) in STATS_AGES
+
+    log("== refresh")
+    log(f"   {refresh_rows(fetcher, rows, pick, today)} items re-read")
     save_rows(rows)
     last_run = {"time": now.strftime("%Y-%m-%d %H:%M"), "sources": status}
     LAST_RUN.write_text(json.dumps(last_run, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")

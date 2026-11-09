@@ -18,6 +18,7 @@ import argparse
 import base64
 import csv
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
@@ -26,8 +27,22 @@ OUT = ROOT / "build"
 DAYS = 30
 FIELDS = [
     "first_seen", "source", "id", "name", "name_alt", "maker", "series", "character", "category",
-    "scale", "price", "currency", "price_note", "release", "preorder_end", "status", "adult", "jan", "url",
+    "scale", "price", "currency", "price_note", "release", "preorder_start", "preorder_end", "status",
+    "rating", "adult", "jan", "url", "size", "material", "sculptor", "painter", "bonus", "progress", "extra",
+    "follows", "wants", "preorders", "owned", "score", "score_count", "views", "stats_date",
 ]
+FALLBACK_JPY_TO_CNY = 0.047
+
+
+def jpy_to_cny(rows: list[dict[str, str]]) -> float:
+    """Median of HPOI's own 人民币 reference prices against their yen prices."""
+    ratios = []
+    for r in rows:
+        cny = re.search(r"([\d,]+)\s*元", r.get("price_note", ""))
+        if r.get("source") == "HPOI" and r.get("currency") == "JPY" and r.get("price", "").isdigit() and cny:
+            ratios.append(int(cny.group(1).replace(",", "")) / int(r["price"]))
+    ratios = sorted(x for x in ratios if 0.02 < x < 0.1)
+    return round(ratios[len(ratios) // 2], 4) if ratios else FALLBACK_JPY_TO_CNY
 
 
 def main() -> None:
@@ -56,6 +71,7 @@ def main() -> None:
     last_run_path = ROOT / "data" / "last_run.json"
     last_run = json.loads(last_run_path.read_text(encoding="utf-8")) if last_run_path.exists() else {}
     data = {
+        "rate": jpy_to_cny(rows),
         "updated": last_run.get("time", ""),
         "runs": last_run.get("sources", {}),
         "days": [{"day": d, "count": sum(1 for i in items if i["first_seen"] == d)} for d in days],
