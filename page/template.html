@@ -1,0 +1,575 @@
+<title>手办新品日报</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=ZCOOL+QingKe+HuangYou&display=swap&text=%E6%89%8B%E5%8A%9E%E6%96%B0%E5%93%81%E6%97%A5%E6%8A%A5">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@500;600&display=swap">
+<style>
+/* Layout: a shelf of pre-order slips. Masthead with a barcode label, a sticky rail of
+   day and filter chips, then slips that fill two columns on a phone and more when wider. */
+:root {
+  --paper: #edf0f4;
+  --card: #ffffff;
+  --ink: #171b23;
+  --ink-soft: #5c6577;
+  --rule: #d6dbe4;
+  --shade: #e4e8ef;
+  --accent: #cf2463;
+  --accent-ink: #ffffff;
+  --sticker: #ffd23f;
+  --sticker-ink: #3b2f00;
+  --adult: #7d3be8;
+  --hpoi: #0e8a7c;
+  --gsc: #cf5f1c;
+  --hlj: #2c5fd0;
+  --ok: #1f8a4c;
+  --warn: #b7791f;
+  --bad: #c53030;
+  --display: "ZCOOL QingKe HuangYou", "PingFang SC", "Hiragino Sans GB", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+  --body: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans", "Hiragino Sans GB", "Noto Sans CJK SC", "Noto Sans SC", "Microsoft YaHei", "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --radius: 6px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --paper: #0f1218; --card: #181c25; --ink: #e8ecf3; --ink-soft: #9aa3b4; --rule: #2a3141; --shade: #222836;
+    --accent: #ff5a92; --accent-ink: #1c0611; --sticker: #f0c232; --sticker-ink: #2a2000; --adult: #b08cff;
+    --hpoi: #3cc0ae; --gsc: #f08c4f; --hlj: #7397ff; --ok: #4cc27f; --warn: #e0a84a; --bad: #ff7b7b;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --paper: #0f1218; --card: #181c25; --ink: #e8ecf3; --ink-soft: #9aa3b4; --rule: #2a3141; --shade: #222836;
+  --accent: #ff5a92; --accent-ink: #1c0611; --sticker: #f0c232; --sticker-ink: #2a2000; --adult: #b08cff;
+  --hpoi: #3cc0ae; --gsc: #f08c4f; --hlj: #7397ff; --ok: #4cc27f; --warn: #e0a84a; --bad: #ff7b7b;
+  color-scheme: dark;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+body { background: var(--paper); color: var(--ink); font-family: var(--body); line-height: 1.5; overflow-wrap: anywhere; }
+body::before {
+  content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px);
+  z-index: 10; background: var(--paper);
+}
+.wrap {
+  max-width: 1180px; margin-inline: auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+button { font: inherit; color: inherit; }
+button:focus-visible, input:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+
+/* masthead */
+.mast { padding-block: 20px 14px; }
+.mast-row { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 10px 24px; }
+.mast-row > * { min-width: 0; }
+.eyebrow { margin: 0 0 6px; font-size: 12px; letter-spacing: .08em; color: var(--ink-soft); }
+.title {
+  margin: 0; font-family: var(--display); font-weight: 400; font-size: clamp(32px, 8vw, 48px);
+  line-height: 1.05; letter-spacing: .03em; text-wrap: balance;
+}
+.label { display: grid; gap: 5px; justify-items: start; }
+@media (min-width: 640px) { .label { justify-items: end; } }
+.barcode {
+  width: 136px; height: 20px;
+  background: repeating-linear-gradient(90deg,
+    var(--ink) 0 2px, transparent 2px 4px, var(--ink) 4px 5px, transparent 5px 8px,
+    var(--ink) 8px 11px, transparent 11px 12px, var(--ink) 12px 13px, transparent 13px 17px);
+}
+.fresh { margin: 0; font: 500 11px/1.3 var(--mono); color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+
+/* filter rail */
+.rail {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  background: var(--paper); border-bottom: 1px solid var(--rule);
+}
+.rail .wrap { display: grid; gap: 8px; padding-block: 8px; }
+.days { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+.days::-webkit-scrollbar { display: none; }
+.day {
+  flex: none; display: grid; padding: 5px 10px; border: 1px solid var(--rule); border-radius: var(--radius);
+  background: var(--card); text-align: left; cursor: pointer;
+}
+.day b { font: 600 13px/1.25 var(--mono); font-variant-numeric: tabular-nums; }
+.day span { font-size: 11px; color: var(--ink-soft); }
+.day[aria-pressed="true"] { background: var(--ink); border-color: var(--ink); color: var(--paper); }
+.day[aria-pressed="true"] span { color: inherit; opacity: .75; }
+.filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.seg, .toggles { display: flex; flex-wrap: wrap; gap: 4px; }
+.chip {
+  display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px;
+  border: 1px solid var(--rule); border-radius: 999px; background: var(--card); font-size: 13px; cursor: pointer;
+}
+.chip .n { font: 500 11px var(--mono); color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.chip .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
+.chip[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.chip[aria-pressed="true"] .n { color: inherit; opacity: .85; }
+.tog::before {
+  content: ""; width: 11px; height: 11px; border: 1.5px solid currentColor; border-radius: 3px;
+}
+.tog[aria-pressed="true"]::before { background: currentColor; box-shadow: inset 0 0 0 2px var(--accent); }
+.search { flex: 1 1 220px; min-width: 0; }
+.search input {
+  width: 100%; padding: 7px 10px; border: 1px solid var(--rule); border-radius: var(--radius);
+  background: var(--card); color: var(--ink); font: inherit; font-size: 16px;
+}
+.search input::placeholder { color: var(--ink-soft); }
+
+/* slips */
+main { padding-block: 14px 28px; }
+.summary { margin: 0 0 12px; font-size: 13px; color: var(--ink-soft); }
+.summary strong { margin-right: 8px; color: var(--ink); font-weight: 600; }
+.grid {
+  list-style: none; margin: 0; padding: 0; display: grid; gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 156px), 1fr));
+}
+@media (min-width: 720px) { .grid { gap: 14px; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); } }
+.sep {
+  grid-column: 1 / -1; display: flex; align-items: center; gap: 10px; margin-top: 8px;
+  font: 600 13px var(--mono); color: var(--ink-soft);
+}
+.sep::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
+.card { min-width: 0; content-visibility: auto; contain-intrinsic-size: auto 340px; }
+.hit {
+  display: flex; flex-direction: column; height: 100%; overflow: hidden;
+  border: 1px solid var(--rule); border-radius: var(--radius); background: var(--card);
+  color: inherit; text-decoration: none; transition: transform .15s ease, border-color .15s ease;
+}
+a.hit:hover { transform: translateY(-2px); border-color: var(--ink-soft); }
+.ph { position: relative; aspect-ratio: 1; max-width: 100%; display: grid; place-items: center; background: var(--shade); }
+.ph img { width: 100%; height: 100%; object-fit: contain; }
+.ph.loaded .ghost { display: none; }
+.ghost { font: 500 11px var(--mono); letter-spacing: .08em; color: var(--ink-soft); }
+.src-tag {
+  position: absolute; left: 6px; top: 6px; padding: 3px 5px; border-radius: 3px;
+  font: 600 10px/1 var(--mono); letter-spacing: .04em; background: var(--c); color: var(--paper);
+}
+.stamp {
+  padding: 4px 10px; border: 2px solid currentColor; border-radius: 4px; transform: rotate(-8deg);
+  font-size: 15px; font-weight: 700; letter-spacing: .16em; color: var(--adult);
+}
+.body { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; padding: 8px 10px 10px; }
+.labels { display: flex; flex-wrap: wrap; gap: 4px; }
+.stk {
+  padding: 3px 5px; border: 1px solid var(--rule); border-radius: 3px;
+  font-size: 11px; line-height: 1; color: var(--ink-soft);
+}
+.stk.pre { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.stk.re { background: var(--sticker); border-color: var(--sticker); color: var(--sticker-ink); }
+.stk.adult { border-color: var(--adult); color: var(--adult); }
+.clamp { display: -webkit-box; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.name { margin: 2px 0 0; font-size: 13.5px; font-weight: 600; line-height: 1.35; -webkit-line-clamp: 3; }
+.alt { margin: 0; font-size: 11px; color: var(--ink-soft); -webkit-line-clamp: 1; }
+.meta { margin: 0; font-size: 12px; color: var(--ink-soft); -webkit-line-clamp: 2; }
+.cat { margin: 0; font-size: 11px; color: var(--ink-soft); -webkit-line-clamp: 1; }
+.slip {
+  display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 8px;
+  margin-top: auto; padding-top: 8px; border-top: 1px dashed var(--rule);
+}
+.price { font: 600 15px var(--mono); font-variant-numeric: tabular-nums; }
+.price small { margin-left: 2px; font: 400 11px var(--body); color: var(--ink-soft); }
+.price.none { font: 400 12px var(--body); color: var(--ink-soft); }
+.rel { font: 500 12px var(--mono); color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.note { margin: 0; font-size: 11px; color: var(--ink-soft); }
+.due { margin: 0; font-size: 11px; font-weight: 600; color: var(--accent); }
+.due.past { font-weight: 400; color: var(--ink-soft); }
+.empty {
+  display: grid; justify-items: center; gap: 10px; padding: 36px 16px;
+  border: 1px dashed var(--rule); border-radius: var(--radius); color: var(--ink-soft); text-align: center;
+}
+.empty p { margin: 0; }
+.btn {
+  padding: 8px 14px; border: 1px solid var(--ink); border-radius: var(--radius);
+  background: transparent; cursor: pointer;
+}
+.more { display: block; margin: 18px auto 0; }
+
+/* footer */
+.foot {
+  display: grid; gap: 20px 32px; padding-block: 8px 40px; font-size: 13px; color: var(--ink-soft);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
+}
+.foot section { min-width: 0; }
+.foot h2 { margin: 0 0 8px; font-size: 13px; font-weight: 600; letter-spacing: .04em; color: var(--ink); }
+.foot ul { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; max-width: 62ch; }
+.tbl { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+th, td { padding: 6px 8px; border-bottom: 1px solid var(--rule); text-align: left; white-space: nowrap; }
+th { font-weight: 600; color: var(--ink); }
+td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+td.wrap-cell { white-space: normal; min-width: 9em; }
+.st { display: inline-flex; align-items: center; gap: 6px; }
+.st::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
+@media (prefers-reduced-motion: reduce) { .hit { transition: none; } a.hit:hover { transform: none; } }
+</style>
+
+<header class="mast">
+  <div class="wrap mast-row">
+    <div>
+      <p class="eyebrow">每日新品 · HPOI / Good Smile 官网 / HLJ</p>
+      <h1 class="title">手办新品日报</h1>
+    </div>
+    <div class="label" aria-hidden="false">
+      <div class="barcode" aria-hidden="true"></div>
+      <p class="fresh" id="fresh"></p>
+    </div>
+  </div>
+</header>
+
+<div class="rail">
+  <div class="wrap">
+    <div class="days" id="days" role="group" aria-label="日期"></div>
+    <div class="filters">
+      <div class="seg" id="sources" role="group" aria-label="来源"></div>
+      <div class="toggles">
+        <button type="button" class="chip tog" id="tog-backfill" aria-pressed="false">旧品补录 <span class="n">0</span></button>
+        <button type="button" class="chip tog" id="tog-adult" aria-pressed="true">成人向 <span class="n">0</span></button>
+      </div>
+      <label class="search"><span class="sr">搜索</span><input id="q" type="search" placeholder="搜名称、厂商、作品、角色" autocomplete="off"></label>
+    </div>
+  </div>
+</div>
+
+<main class="wrap">
+  <p class="summary" id="summary"></p>
+  <ul class="grid" id="grid"></ul>
+  <div class="empty" id="empty" hidden>
+    <p id="empty-text">没有符合当前筛选的商品。</p>
+    <button type="button" class="btn" id="reset">清除筛选</button>
+  </div>
+  <button type="button" class="btn more" id="more" hidden>再显示</button>
+</main>
+
+<footer class="wrap foot">
+  <section>
+    <h2>上次运行</h2>
+    <div class="tbl">
+      <table id="runs">
+        <thead><tr><th>来源</th><th>结果</th><th>新增</th><th>备注</th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+  <section>
+    <h2>说明</h2>
+    <ul>
+      <li>每天早上 7:40 左右（北京时间）自动抓取一次，这里显示最近 30 天。点卡片打开原页面。</li>
+      <li>价格是各站标价。HPOI 给的人民币参考价写在价格下面。</li>
+      <li>成人向（HPOI 观感成熟）只记录文字，不显示图片。HLJ 的成人向商品要登录才看得到，没有收录。</li>
+      <li>旧品补录是 HPOI 新收录、但发售已超过三个月的老商品，默认不显示。</li>
+      <li>AmiAmi、HobbySearch 有人机验证，电击 Hobby 不允许程序抓取，所以没有收录。</li>
+    </ul>
+  </section>
+</footer>
+
+<script id="figure-data" type="application/json">__FIGURE_DATA__</script>
+<script>
+(() => {
+  "use strict";
+  const DATA = JSON.parse(document.getElementById("figure-data").textContent);
+  const SOURCES = ["HPOI", "GoodSmile", "HLJ"];
+  const SOURCE_LABEL = { HPOI: "HPOI", GoodSmile: "Good Smile", HLJ: "HLJ" };
+  const SOURCE_COLOR = { HPOI: "var(--hpoi)", GoodSmile: "var(--gsc)", HLJ: "var(--hlj)" };
+  const CURRENCY = { JPY: "日元", CNY: "元", USD: "美元" };
+  const BACKFILL = "旧品补录";
+  const STEP = 120;
+  const WEEK = "日一二三四五六";
+
+  const store = {
+    get(key, fallback) {
+      try { const v = localStorage.getItem("figure-news:" + key); return v === null ? fallback : JSON.parse(v); }
+      catch { return fallback; }
+    },
+    set(key, value) {
+      try { localStorage.setItem("figure-news:" + key, JSON.stringify(value)); } catch { /* storage unavailable */ }
+    },
+  };
+
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, cls, text) => {
+    const n = document.createElement(tag);
+    if (cls) n.className = cls;
+    if (text != null) n.textContent = text;
+    return n;
+  };
+  const safeUrl = (u) => (/^https:\/\//i.test(u || "") ? u : null);
+
+  // Dates are Beijing calendar days.
+  const bj = new Date(Date.now() + 8 * 3600e3);
+  const today = Date.UTC(bj.getUTCFullYear(), bj.getUTCMonth(), bj.getUTCDate());
+  const parseDay = (s) => {
+    const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s || "");
+    return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) : NaN;
+  };
+  const dayInfo = (s) => {
+    const d = new Date(parseDay(s));
+    const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
+    const dd = String(d.getUTCDate()).padStart(2, "0");
+    const wk = "周" + WEEK[d.getUTCDay()];
+    return { md: `${mm}/${dd}`, wk, long: `${d.getUTCMonth() + 1}月${d.getUTCDate()}日 ${wk}` };
+  };
+  const release = (r) => {
+    if (!r) return "发售未定";
+    const m = /^(\d{4})-(\d{2})$/.exec(r);
+    return m ? `${m[1]}.${m[2]} 发售` : `发售 ${r}`;
+  };
+  const deadline = (s) => {
+    const t = parseDay(s);
+    if (Number.isNaN(t)) return { text: `截订 ${s}`, past: false };
+    const left = Math.round((t - today) / 864e5);
+    const { md } = dayInfo(s);
+    if (left < 0) return { text: `已于 ${md} 截订`, past: true };
+    if (left === 0) return { text: `今天截订（${md}）`, past: false };
+    return { text: `截订 ${md} · 还剩 ${left} 天`, past: false };
+  };
+
+  const order = Object.fromEntries(SOURCES.map((s, i) => [s, i]));
+  const items = DATA.items.map((it, idx) => ({
+    ...it,
+    idx,
+    hay: [it.name, it.name_alt, it.maker, it.series, it.character, it.category, it.id, it.jan]
+      .filter(Boolean).join(" ").toLowerCase(),
+  }));
+  // Newest day first; within a day by source, HPOI by its sequential ids, others as listed.
+  items.sort((a, b) =>
+    b.first_seen.localeCompare(a.first_seen)
+    || (order[a.source] ?? 9) - (order[b.source] ?? 9)
+    || (a.source === "HPOI" ? Number(b.id) - Number(a.id) : a.idx - b.idx));
+  const days = DATA.days || [];
+
+  const state = {
+    day: days.length ? days[0].day : "all",
+    source: store.get("source", "all"),
+    backfill: store.get("backfill", false) === true,
+    adult: store.get("adult", true) !== false,
+    q: "",
+    list: [],
+    shown: 0,
+  };
+  if (state.source !== "all" && !SOURCES.includes(state.source)) state.source = "all";
+
+  // Thumbnails ship as one JSON bundle per day, fetched when a slip nears the screen.
+  const bundles = new Map();
+  const bundle = (day) => {
+    if (!bundles.has(day)) {
+      bundles.set(day, fetch(`thumbs/${day}.json`).then((r) => (r.ok ? r.json() : {})).catch(() => ({})));
+    }
+    return bundles.get(day);
+  };
+  const paint = (ph) => {
+    bundle(ph.dataset.day).then((map) => {
+      const img = ph.querySelector("img");
+      const src = map[ph.dataset.key];
+      if (src && img) {
+        img.src = src;
+        img.hidden = false;
+        ph.classList.add("loaded");
+      } else {
+        ph.querySelector(".ghost").textContent = "暂无图片";
+      }
+    });
+  };
+  const io = "IntersectionObserver" in window
+    ? new IntersectionObserver((entries) => {
+        for (const e of entries) if (e.isIntersecting) { io.unobserve(e.target); paint(e.target); }
+      }, { rootMargin: "500px 0px" })
+    : null;
+
+  const inScope = (it, ignore) => {
+    if (state.day !== "all" && it.first_seen !== state.day) return false;
+    if (ignore !== "source" && state.source !== "all" && it.source !== state.source) return false;
+    if (ignore !== "backfill" && !state.backfill && it.status === BACKFILL) return false;
+    if (ignore !== "adult" && !state.adult && it.adult) return false;
+    if (state.q && !it.hay.includes(state.q)) return false;
+    return true;
+  };
+
+  function card(it) {
+    const li = el("li", "card");
+    const url = safeUrl(it.url);
+    const hit = el(url ? "a" : "div", "hit");
+    if (url) { hit.href = url; hit.target = "_blank"; hit.rel = "noopener noreferrer"; }
+
+    const ph = el("div", "ph");
+    const tag = el("span", "src-tag", SOURCE_LABEL[it.source] || it.source);
+    tag.style.setProperty("--c", SOURCE_COLOR[it.source] || "var(--ink-soft)");
+    ph.append(tag);
+    if (it.adult) {
+      ph.append(el("span", "stamp", "成人向"));
+    } else if (it.thumb) {
+      const img = el("img");
+      img.alt = "";
+      img.decoding = "async";
+      img.hidden = true;
+      ph.append(img, el("span", "ghost", "图片加载中"));
+      ph.dataset.day = it.first_seen;
+      ph.dataset.key = `${it.source}/${it.id}`;
+      if (io) io.observe(ph); else paint(ph);
+    } else {
+      ph.append(el("span", "ghost", "暂无图片"));
+    }
+
+    const body = el("div", "body");
+    const labels = el("div", "labels");
+    for (const s of String(it.status || "").split(" · ").filter(Boolean)) {
+      labels.append(el("span", s.includes("再贩") ? "stk re" : s === "预订中" ? "stk pre" : "stk", s));
+    }
+    if (it.adult) labels.append(el("span", "stk adult", "成人向"));
+    if (it.scale) labels.append(el("span", "stk", it.scale));
+    if (labels.childElementCount) body.append(labels);
+    body.append(el("h3", "name clamp", it.name || it.id));
+    if (it.name_alt && it.name_alt !== it.name) body.append(el("p", "alt clamp", it.name_alt));
+    const meta = [it.maker, it.series, it.character].filter(Boolean).join(" · ");
+    if (meta) body.append(el("p", "meta clamp", meta));
+    if (it.category) body.append(el("p", "cat clamp", it.category));
+
+    const slip = el("div", "slip");
+    if (/^\d+$/.test(it.price || "")) {
+      const price = el("span", "price", Number(it.price).toLocaleString("en-US"));
+      price.append(el("small", null, CURRENCY[it.currency] || it.currency || ""));
+      slip.append(price);
+    } else {
+      slip.append(el("span", "price none", "价格未定"));
+    }
+    slip.append(el("span", "rel", release(it.release)));
+    body.append(slip);
+    if (it.price_note) body.append(el("p", "note", it.price_note));
+    if (it.preorder_end) {
+      const d = deadline(it.preorder_end);
+      body.append(el("p", d.past ? "due past" : "due", d.text));
+    }
+    hit.append(ph, body);
+    li.append(hit);
+    return li;
+  }
+
+  function appendCards(count) {
+    const grid = $("grid");
+    const end = Math.min(state.list.length, state.shown + count);
+    let prevDay = state.shown ? state.list[state.shown - 1].first_seen : null;
+    for (let i = state.shown; i < end; i++) {
+      const it = state.list[i];
+      if (state.day === "all" && it.first_seen !== prevDay) grid.append(el("li", "sep", dayInfo(it.first_seen).long));
+      prevDay = it.first_seen;
+      grid.append(card(it));
+    }
+    state.shown = end;
+    const left = state.list.length - state.shown;
+    const more = $("more");
+    more.hidden = left <= 0;
+    more.textContent = `再显示 ${Math.min(STEP, left)} 件（还有 ${left} 件）`;
+  }
+
+  function renderSources() {
+    const counts = { all: 0 };
+    for (const it of items) {
+      if (!inScope(it, "source")) continue;
+      counts.all++;
+      counts[it.source] = (counts[it.source] || 0) + 1;
+    }
+    const box = $("sources");
+    box.replaceChildren();
+    for (const key of ["all", ...SOURCES]) {
+      const b = el("button", "chip");
+      b.type = "button";
+      b.setAttribute("aria-pressed", String(state.source === key));
+      if (key !== "all") {
+        const dot = el("i", "dot");
+        dot.style.setProperty("--c", SOURCE_COLOR[key]);
+        b.append(dot);
+      }
+      b.append(document.createTextNode(key === "all" ? "全部" : SOURCE_LABEL[key]), el("span", "n", String(counts[key] || 0)));
+      b.addEventListener("click", () => { state.source = key; store.set("source", key); render(); });
+      box.append(b);
+    }
+  }
+
+  function renderToggles() {
+    let backfill = 0;
+    let adult = 0;
+    for (const it of items) {
+      if (it.status === BACKFILL && inScope(it, "backfill")) backfill++;
+      if (it.adult && inScope(it, "adult")) adult++;
+    }
+    for (const [id, on, n] of [["tog-backfill", state.backfill, backfill], ["tog-adult", state.adult, adult]]) {
+      const b = $(id);
+      b.setAttribute("aria-pressed", String(on));
+      b.querySelector(".n").textContent = String(n);
+    }
+  }
+
+  function render() {
+    for (const b of $("days").children) b.setAttribute("aria-pressed", String(b.dataset.day === state.day));
+    renderSources();
+    renderToggles();
+    state.list = items.filter((it) => inScope(it));
+    state.shown = 0;
+    if (io) io.disconnect();
+    $("grid").replaceChildren();
+    appendCards(STEP);
+
+    const total = state.day === "all" ? items.length : (days.find((d) => d.day === state.day)?.count ?? 0);
+    const label = state.day === "all" ? `最近 ${days.length} 天` : dayInfo(state.day).long;
+    $("summary").replaceChildren(el("strong", null, label), document.createTextNode(`显示 ${state.list.length} 件，共 ${total} 件`));
+    $("empty").hidden = state.list.length > 0;
+    $("empty-text").textContent = items.length ? "没有符合当前筛选的商品。" : "还没有数据，第一次抓取完成后会出现在这里。";
+    $("reset").hidden = !items.length;
+  }
+
+  function renderDays() {
+    const box = $("days");
+    const make = (value, top, bottom) => {
+      const b = el("button", "day");
+      b.type = "button";
+      b.dataset.day = value;
+      b.append(el("b", null, top), el("span", null, bottom));
+      b.addEventListener("click", () => { state.day = value; render(); });
+      box.append(b);
+    };
+    for (const { day, count } of days) {
+      const d = dayInfo(day);
+      make(day, d.md, `${d.wk} · ${count} 件`);
+    }
+    if (days.length > 1) make("all", "全部", `${days.length} 天 · ${items.length} 件`);
+  }
+
+  function renderRuns() {
+    const labels = { ok: ["正常", "var(--ok)"], blocked: ["被网站拦截", "var(--bad)"], error: ["出错", "var(--warn)"] };
+    const tbody = $("runs").querySelector("tbody");
+    for (const key of SOURCES) {
+      const run = (DATA.runs || {})[key] || {};
+      const [text, color] = labels[run.status] || ["—", "var(--ink-soft)"];
+      const status = el("span", "st", text);
+      status.style.setProperty("--c", color);
+      const cell = el("td");
+      cell.append(status);
+      const tr = el("tr");
+      tr.append(el("td", null, SOURCE_LABEL[key]), cell, el("td", "num", String(run.new ?? 0)), el("td", "wrap-cell", run.note || ""));
+      tbody.append(tr);
+    }
+    $("fresh").textContent = DATA.updated ? `数据更新于 ${DATA.updated}（北京时间）` : "";
+  }
+
+  let typing = 0;
+  $("q").addEventListener("input", (e) => {
+    clearTimeout(typing);
+    typing = setTimeout(() => { state.q = e.target.value.trim().toLowerCase(); render(); }, 150);
+  });
+  $("tog-backfill").addEventListener("click", () => { state.backfill = !state.backfill; store.set("backfill", state.backfill); render(); });
+  $("tog-adult").addEventListener("click", () => { state.adult = !state.adult; store.set("adult", state.adult); render(); });
+  $("more").addEventListener("click", () => appendCards(STEP));
+  $("reset").addEventListener("click", () => {
+    Object.assign(state, { source: "all", backfill: false, adult: true, q: "" });
+    $("q").value = "";
+    store.set("source", "all");
+    store.set("backfill", false);
+    store.set("adult", true);
+    render();
+  });
+
+  renderDays();
+  renderRuns();
+  render();
+})();
+</script>
