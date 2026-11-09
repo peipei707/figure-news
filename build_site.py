@@ -1,20 +1,14 @@
 #!/usr/bin/env python3
-"""Build the figure-news web page from data/items.csv.
+"""Build the figure-news web page for GitHub Pages from data/items.csv.
 
 Writes build/index.html (page/template.html with the latest 30 days of items
-inline) and build/thumbs/YYYY-MM-DD.json (each day's thumbnails as data: URIs,
-which the page loads as you scroll). The page is published as a claude.ai
-artifact, and an artifact can only show images that ship with it.
-
-The last line printed is PUBLISH_FILES={...}: the `files` map for the next
-publish to the artifact. Pass --published with the paths the artifact already
-has (from the Artifact tool's file listing) and the map sends only bundles it
-lacks plus the two newest days, and removes (null) bundles older than 30 days.
+inline, as a complete HTML document) and build/thumbs/YYYY-MM-DD.json (each
+day's thumbnails as data: URIs, which the page loads as you scroll). The daily
+workflow uploads build/ to GitHub Pages.
 """
 
 from __future__ import annotations
 
-import argparse
 import base64
 import csv
 import json
@@ -33,9 +27,7 @@ FIELDS = [
 ]
 FALLBACK_JPY_TO_CNY = 0.047
 SUMMARY = "每天汇总 HPOI、Good Smile 官网和 HLJ 的手办新品：价格、发售、预订期、人气和规格。"
-# claude.ai wraps the published page in this skeleton; GitHub Pages serves the file as is,
-# so --standalone adds the same skeleton (plus a description for link previews).
-STANDALONE_HEAD = (
+HEAD = (
     '<!doctype html><html lang="zh-CN"><head><meta charset="utf-8">'
     '<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">'
     f'<meta name="description" content="{SUMMARY}">'
@@ -46,7 +38,7 @@ STANDALONE_HEAD = (
     "body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif}img{max-width:100%}"
     "[hidden]{display:none!important}</style></head><body>\n"
 )
-STANDALONE_TAIL = "\n</body></html>\n"
+TAIL = "\n</body></html>\n"
 
 
 def jpy_to_cny(rows: list[dict[str, str]]) -> float:
@@ -61,14 +53,6 @@ def jpy_to_cny(rows: list[dict[str, str]]) -> float:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Build the figure-news web page.")
-    parser.add_argument("--published", default="",
-                        help="comma-separated paths the artifact already has, e.g. thumbs/2026-11-09.json")
-    parser.add_argument("--standalone", action="store_true",
-                        help="write a complete HTML document (for GitHub Pages) instead of the artifact body")
-    args = parser.parse_args()
-    published = {p.strip() for p in args.published.split(",") if p.strip().startswith("thumbs/")}
-
     with (ROOT / "data" / "items.csv").open(newline="", encoding="utf-8-sig") as f:
         rows = list(csv.DictReader(f))
     days = sorted({r["first_seen"] for r in rows if r.get("first_seen")}, reverse=True)[:DAYS]
@@ -101,10 +85,7 @@ def main() -> None:
         raise SystemExit("page/template.html must contain __FIGURE_DATA__ exactly once")
 
     (OUT / "thumbs").mkdir(parents=True, exist_ok=True)
-    page = template.replace("__FIGURE_DATA__", payload)
-    if args.standalone:
-        page = STANDALONE_HEAD + page + STANDALONE_TAIL
-    (OUT / "index.html").write_text(page, encoding="utf-8")
+    (OUT / "index.html").write_text(HEAD + template.replace("__FIGURE_DATA__", payload) + TAIL, encoding="utf-8")
     for old in (OUT / "thumbs").glob("*.json"):
         if old.stem not in bundles:
             old.unlink()
@@ -116,14 +97,6 @@ def main() -> None:
     for day in days:
         path = OUT / "thumbs" / f"{day}.json"
         print(f"build/thumbs/{day}.json  {path.stat().st_size / 1024:.0f} KB, {len(bundles[day])} thumbnails")
-
-    # Today's bundle can still grow and yesterday's may have been published early,
-    # so the two newest days are always sent again.
-    current = {f"thumbs/{day}.json" for day in days}
-    plan: dict[str, str | None] = {
-        path: path for path in sorted(current) if path not in published or path[7:17] in days[:2]}
-    plan.update({path: None for path in sorted(published - current)})
-    print("PUBLISH_FILES=" + json.dumps(plan))
 
 
 if __name__ == "__main__":
