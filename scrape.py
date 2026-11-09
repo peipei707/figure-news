@@ -43,8 +43,7 @@ LAST_RUN = ROOT / "data" / "last_run.json"
 DAILY_DIR = ROOT / "daily"
 THUMB_DIR = ROOT / "thumbs"
 README = ROOT / "README.md"
-PAGE_URL = "https://claude.ai/artifact/MpGg62ocB5aBF7wCvRubAf"  # the web page built by build_site.py
-PAGES_URL = "https://peipei707.github.io/figure-news/"  # the same page on GitHub Pages
+PAGES_URL = "https://peipei707.github.io/figure-news/"  # the web page built by build_site.py
 
 USER_AGENT = "figure-news/0.1 (personal hobby tracker)"
 BEIJING = timezone(timedelta(hours=8))
@@ -854,8 +853,7 @@ def render_readme(rows: list[dict[str, str]], last_run: dict) -> str:
            "每天早上（北京时间 7:40 左右）自动抓一次 HPOI、Good Smile 官网、HLJ 的新品，按天汇总成表。", ""]
     if days:
         out += [f"**最新一期：[{days[0]}](daily/{days[0]}.md)（{counts[days[0]]} 件）**", ""]
-    out += [f"**公开网页：[{PAGES_URL}]({PAGES_URL})**（GitHub Pages，每天抓取后自动更新，最近 30 天）", "",
-            f"claude.ai 版本：[手办新品日报]({PAGE_URL})（每天 9:15 左右刷新）", ""]
+    out += [f"**公开网页：[{PAGES_URL}]({PAGES_URL})**（GitHub Pages，每天抓取后自动更新，最近 30 天）", ""]
     out += ["## 上次运行", "", f"{last_run['time']}（北京时间）", "",
             "| 来源 | 结果 | 新增 | 备注 |", "|---|---|---|---|"]
     labels = {"ok": "✅ 正常", "blocked": "⛔ 被网站拦截", "error": "⚠️ 出错"}

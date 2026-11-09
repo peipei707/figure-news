@@ -51,10 +51,9 @@ jobs:
           git pull --rebase
           git push
 
-      # The same page as the claude.ai one, as a complete document for GitHub Pages.
       - name: Build the web page
         if: ${{ !cancelled() }}
-        run: python build_site.py --standalone
+        run: python build_site.py
 
       - uses: actions/upload-pages-artifact@v4
         if: ${{ !cancelled() }}

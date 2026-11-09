@@ -6,8 +6,6 @@
 
 **公开网页：[https://peipei707.github.io/figure-news/](https://peipei707.github.io/figure-news/)**（GitHub Pages，每天抓取后自动更新，最近 30 天）
 
-claude.ai 版本：[手办新品日报](https://claude.ai/artifact/MpGg62ocB5aBF7wCvRubAf)（每天 9:15 左右刷新）
-
 ## 上次运行
 
 2026-11-09 17:28（北京时间）
