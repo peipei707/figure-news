@@ -5,10 +5,16 @@ Writes build/index.html (page/template.html with the latest 30 days of items
 inline) and build/thumbs/YYYY-MM-DD.json (each day's thumbnails as data: URIs,
 which the page loads as you scroll). The page is published as a claude.ai
 artifact, and an artifact can only show images that ship with it.
+
+The last line printed is PUBLISH_FILES={...}: the `files` map for the next
+publish to the artifact. Pass --published with the paths the artifact already
+has (from the Artifact tool's file listing) and the map sends only bundles it
+lacks plus the two newest days, and removes (null) bundles older than 30 days.
 """
 
 from __future__ import annotations
 
+import argparse
 import base64
 import csv
 import json
@@ -25,6 +31,11 @@ FIELDS = [
 
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Build the figure-news web page.")
+    parser.add_argument("--published", default="",
+                        help="comma-separated paths the artifact already has, e.g. thumbs/2026-11-09.json")
+    published = {p.strip() for p in parser.parse_args().published.split(",") if p.strip().startswith("thumbs/")}
+
     with (ROOT / "data" / "items.csv").open(newline="", encoding="utf-8-sig") as f:
         rows = list(csv.DictReader(f))
     days = sorted({r["first_seen"] for r in rows if r.get("first_seen")}, reverse=True)[:DAYS]
@@ -68,6 +79,14 @@ def main() -> None:
     for day in days:
         path = OUT / "thumbs" / f"{day}.json"
         print(f"build/thumbs/{day}.json  {path.stat().st_size / 1024:.0f} KB, {len(bundles[day])} thumbnails")
+
+    # Today's bundle can still grow and yesterday's may have been published early,
+    # so the two newest days are always sent again.
+    current = {f"thumbs/{day}.json" for day in days}
+    plan: dict[str, str | None] = {
+        path: path for path in sorted(current) if path not in published or path[7:17] in days[:2]}
+    plan.update({path: None for path in sorted(published - current)})
+    print("PUBLISH_FILES=" + json.dumps(plan))
 
 
 if __name__ == "__main__":

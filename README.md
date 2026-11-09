@@ -4,7 +4,7 @@
 
 **最新一期：[2026-11-09](daily/2026-11-09.md)（150 件）**
 
-**网页版：[手办新品日报](https://claude.ai/artifact/MpGg62ocB5aBF7wCvRubAf)**（claude.ai 私有页面，显示最近 30 天，带筛选和搜索）
+**网页版：[手办新品日报](https://claude.ai/artifact/MpGg62ocB5aBF7wCvRubAf)**（claude.ai 私有页面，最近 30 天，每天 9:15 左右自动刷新）
 
 ## 上次运行
 

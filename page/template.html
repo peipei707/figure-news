@@ -254,7 +254,7 @@ td.wrap-cell { white-space: normal; min-width: 9em; }
   <section>
     <h2>说明</h2>
     <ul>
-      <li>每天早上 7:40 左右（北京时间）自动抓取一次，这里显示最近 30 天。点卡片打开原页面。</li>
+      <li>每天早上 7:40 左右（北京时间）抓取新品，9:15 左右自动刷新这个网页，显示最近 30 天。点卡片打开原页面。</li>
       <li>价格是各站标价。HPOI 给的人民币参考价写在价格下面。</li>
       <li>成人向（HPOI 观感成熟）只记录文字，不显示图片。HLJ 的成人向商品要登录才看得到，没有收录。</li>
       <li>旧品补录是 HPOI 新收录、但发售已超过三个月的老商品，默认不显示。</li>
@@ -275,16 +275,6 @@ td.wrap-cell { white-space: normal; min-width: 9em; }
   const BACKFILL = "旧品补录";
   const STEP = 120;
   const WEEK = "日一二三四五六";
-
-  const store = {
-    get(key, fallback) {
-      try { const v = localStorage.getItem("figure-news:" + key); return v === null ? fallback : JSON.parse(v); }
-      catch { return fallback; }
-    },
-    set(key, value) {
-      try { localStorage.setItem("figure-news:" + key, JSON.stringify(value)); } catch { /* storage unavailable */ }
-    },
-  };
 
   const $ = (id) => document.getElementById(id);
   const el = (tag, cls, text) => {
@@ -338,16 +328,16 @@ td.wrap-cell { white-space: normal; min-width: 9em; }
     || (a.source === "HPOI" ? Number(b.id) - Number(a.id) : a.idx - b.idx));
   const days = DATA.days || [];
 
+  // Every visit opens on the newest day, all sources, adult items shown, old catalogue entries hidden.
   const state = {
     day: days.length ? days[0].day : "all",
-    source: store.get("source", "all"),
-    backfill: store.get("backfill", false) === true,
-    adult: store.get("adult", true) !== false,
+    source: "all",
+    backfill: false,
+    adult: true,
     q: "",
     list: [],
     shown: 0,
   };
-  if (state.source !== "all" && !SOURCES.includes(state.source)) state.source = "all";
 
   // Thumbnails ship as one JSON bundle per day, fetched when a slip nears the screen.
   const bundles = new Map();
@@ -480,7 +470,7 @@ td.wrap-cell { white-space: normal; min-width: 9em; }
         b.append(dot);
       }
       b.append(document.createTextNode(key === "all" ? "全部" : SOURCE_LABEL[key]), el("span", "n", String(counts[key] || 0)));
-      b.addEventListener("click", () => { state.source = key; store.set("source", key); render(); });
+      b.addEventListener("click", () => { state.source = key; render(); });
       box.append(b);
     }
   }
@@ -556,15 +546,12 @@ td.wrap-cell { white-space: normal; min-width: 9em; }
     clearTimeout(typing);
     typing = setTimeout(() => { state.q = e.target.value.trim().toLowerCase(); render(); }, 150);
   });
-  $("tog-backfill").addEventListener("click", () => { state.backfill = !state.backfill; store.set("backfill", state.backfill); render(); });
-  $("tog-adult").addEventListener("click", () => { state.adult = !state.adult; store.set("adult", state.adult); render(); });
+  $("tog-backfill").addEventListener("click", () => { state.backfill = !state.backfill; render(); });
+  $("tog-adult").addEventListener("click", () => { state.adult = !state.adult; render(); });
   $("more").addEventListener("click", () => appendCards(STEP));
   $("reset").addEventListener("click", () => {
     Object.assign(state, { source: "all", backfill: false, adult: true, q: "" });
     $("q").value = "";
-    store.set("source", "all");
-    store.set("backfill", false);
-    store.set("adult", true);
     render();
   });
 

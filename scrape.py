@@ -717,7 +717,7 @@ def render_day(day: str, rows: list[dict[str, str]]) -> str:
             out += [f"<details><summary>{BACKFILL} {len(old)} 件：HPOI 新收录、但早已发售的老商品</summary>", "",
                     *table(old), "", "</details>", ""]
         if adult:
-            out += [f"<details><summary>成人向 {len(adult)} 件：只记录文字和链接，不保存图片</summary>", "",
+            out += [f"<details open><summary>成人向 {len(adult)} 件：只记录文字和链接，不保存图片</summary>", "",
                     *table(adult), "", "</details>", ""]
     return "\n".join(out)
 
@@ -729,7 +729,7 @@ def render_readme(rows: list[dict[str, str]], last_run: dict) -> str:
            "每天早上（北京时间 7:40 左右）自动抓一次 HPOI、Good Smile 官网、HLJ 的新品，按天汇总成表。", ""]
     if days:
         out += [f"**最新一期：[{days[0]}](daily/{days[0]}.md)（{counts[days[0]]} 件）**", ""]
-    out += [f"**网页版：[手办新品日报]({PAGE_URL})**（claude.ai 私有页面，显示最近 30 天，带筛选和搜索）", ""]
+    out += [f"**网页版：[手办新品日报]({PAGE_URL})**（claude.ai 私有页面，最近 30 天，每天 9:15 左右自动刷新）", ""]
     out += ["## 上次运行", "", f"{last_run['time']}（北京时间）", "",
             "| 来源 | 结果 | 新增 | 备注 |", "|---|---|---|---|"]
     labels = {"ok": "✅ 正常", "blocked": "⛔ 被网站拦截", "error": "⚠️ 出错"}
