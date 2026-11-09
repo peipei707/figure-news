@@ -42,6 +42,7 @@ LAST_RUN = ROOT / "data" / "last_run.json"
 DAILY_DIR = ROOT / "daily"
 THUMB_DIR = ROOT / "thumbs"
 README = ROOT / "README.md"
+PAGE_URL = "https://claude.ai/artifact/MpGg62ocB5aBF7wCvRubAf"  # the web page built by build_site.py
 
 USER_AGENT = "figure-news/0.1 (personal hobby tracker)"
 BEIJING = timezone(timedelta(hours=8))
@@ -60,13 +61,17 @@ HPOI_CATEGORIES = [c.strip() for c in os.environ.get("FIGURE_NEWS_HPOI_CATEGORIE
 # this many months back or earlier is folded away on the daily page.
 BACKFILL_MONTHS = 3
 BACKFILL = "旧品补录"
+# HPOI 属性 words that mark an adult-oriented item, and the listing filter that
+# shows only 观感成熟 items.
+ADULT_WORDS = ("观感成熟", "R18", "R-18", "18禁", "成人")
+HPOI_ADULT_FILTER = "r18=315"
 
 SOURCES = {"HPOI": "HPOI", "GoodSmile": "Good Smile 官网", "HLJ": "HLJ"}
 
 CSV_FIELDS = [
     "first_seen", "source", "id", "name", "name_alt", "maker", "series", "character", "category",
     "scale", "price", "currency", "price_note", "release", "preorder_start",
-    "preorder_end", "status", "jan", "image_url", "thumb", "url",
+    "preorder_end", "status", "rating", "adult", "jan", "image_url", "thumb", "url",
 ]
 
 
@@ -89,6 +94,8 @@ class Item:
     preorder_start: str = ""
     preorder_end: str = ""
     status: str = ""
+    rating: str = ""  # HPOI's 观感 level: 观感安心 / 观感温和 / 观感成熟
+    adult: str = ""  # "1" for adult-oriented items; they are recorded without images
     jan: str = ""
     image_url: str = ""
     thumb: str = ""
@@ -374,6 +381,11 @@ def hpoi_detail(html: str, it: Item) -> None:
         it.currency = currency_of(offer.get("priceCurrency"), price_text)
     note = re.search(r"[（(]([^）)]*)[）)]", price_text)
     it.price_note = clean(note.group(1)) if note else ""
+    attrs = info.get("属性", "")
+    rating = re.search(r"观感\S+", attrs)
+    it.rating = rating.group(0) if rating else ""
+    if any(word in attrs for word in ADULT_WORDS):
+        it.adult = "1"
     it.release = month_of(info.get("出货日") or info.get("发售日") or prod.get("releaseDate") or "") or it.release
 
 
@@ -444,8 +456,10 @@ def gsc_detail(html: str, it: Item) -> None:
 # --------------------------------------------------------------------------
 # HobbyLink Japan (www.hlj.com): figures added in the last 7 days, preorders
 
+# HLJ shows adult items only to signed-in, age-verified accounts, so anonymous
+# results are the same with or without its AdultItem=0 filter.
 HLJ_SEARCH = ("https://www.hlj.com/search/?GenreCode2=Figures&MacroType2=Completed+Models"
-              "&StockLevel=All+Future+Release&AdultItem=0&dateAdded2=-7&Sort=std+desc&Page={page}")
+              "&StockLevel=All+Future+Release&dateAdded2=-7&Sort=std+desc&Page={page}")
 
 
 def hlj_total(html: str) -> str | None:
@@ -524,7 +538,10 @@ SOURCE_DEFS = [
     Source("HPOI",
            [[f"{HPOI_BASE}hobby/all?order=add&category={c}"]
             + [f"{HPOI_BASE}hobby/all?order=add&category={c}&page={p}" for p in (2, 3)]
-            for c in HPOI_CATEGORIES],
+            for c in HPOI_CATEGORIES]
+           # The full listing already includes 观感成熟 items; this one shows only them,
+           # so they are not missed when a busy day pushes them off the first pages.
+           + [[f"{HPOI_BASE}hobby/all?order=add&category={c}&{HPOI_ADULT_FILTER}"] for c in HPOI_CATEGORIES],
            hpoi_list, hpoi_detail, newest_first=True),
     Source("GoodSmile", [[GSC_HOME]], gsc_list, gsc_detail, newest_first=False),
     Source("HLJ", [[HLJ_SEARCH.format(page=p) for p in (1, 2, 3, 4)]], hlj_list, hlj_detail,
@@ -547,6 +564,9 @@ def list_new(src: Source, fetcher: Fetcher, known: set[tuple[str, str]]) -> list
                 elif count != total:  # the site answered with a different result set
                     break
             listed = src.parse_list(html)
+            if HPOI_ADULT_FILTER in url:  # known adult before the detail page says so
+                for it in listed:
+                    it.adult = "1"
             ids = [it.id for it in listed]
             if not listed or ids == previous:  # empty page, or the site ignored the page number
                 break
@@ -564,7 +584,7 @@ def list_new(src: Source, fetcher: Fetcher, known: set[tuple[str, str]]) -> list
 
 def save_thumb(fetcher: Fetcher, it: Item) -> None:
     url = it.thumb_src or it.image_url
-    if not url:
+    if not url or it.adult:  # adult items are recorded without images
         return
     dest = THUMB_DIR / it.source / (re.sub(r"[^A-Za-z0-9_-]", "_", it.id) + ".jpg")
     if not dest.exists():
@@ -649,7 +669,7 @@ def item_cell(r: dict[str, str]) -> str:
     meta = " · ".join(md(x) for x in (r["maker"], r["series"], r["character"]) if x)
     if meta:
         lines.append(meta)
-    tags = " · ".join(md(x) for x in (r["category"], r["scale"], r["status"]) if x)
+    tags = " · ".join(md(x) for x in (r["category"], r["scale"], r["status"], "成人向" * bool(r["adult"])) if x)
     if tags:
         lines.append(f"<sub>{tags}</sub>")
     return "<br>".join(lines)
@@ -687,14 +707,18 @@ def render_day(day: str, rows: list[dict[str, str]]) -> str:
     for key, items in groups.items():
         if not items:
             continue
-        fresh = [r for r in items if r["status"] != BACKFILL]
-        old = [r for r in items if r["status"] == BACKFILL]
+        adult = [r for r in items if r["adult"]]
+        fresh = [r for r in items if not r["adult"] and r["status"] != BACKFILL]
+        old = [r for r in items if not r["adult"] and r["status"] == BACKFILL]
         out += [f"## {SOURCES[key]}（{len(items)}）", ""]
         if fresh:
             out += table(fresh) + [""]
         if old:
             out += [f"<details><summary>{BACKFILL} {len(old)} 件：HPOI 新收录、但早已发售的老商品</summary>", "",
                     *table(old), "", "</details>", ""]
+        if adult:
+            out += [f"<details><summary>成人向 {len(adult)} 件：只记录文字和链接，不保存图片</summary>", "",
+                    *table(adult), "", "</details>", ""]
     return "\n".join(out)
 
 
@@ -705,6 +729,7 @@ def render_readme(rows: list[dict[str, str]], last_run: dict) -> str:
            "每天早上（北京时间 7:40 左右）自动抓一次 HPOI、Good Smile 官网、HLJ 的新品，按天汇总成表。", ""]
     if days:
         out += [f"**最新一期：[{days[0]}](daily/{days[0]}.md)（{counts[days[0]]} 件）**", ""]
+    out += [f"**网页版：[手办新品日报]({PAGE_URL})**（claude.ai 私有页面，显示最近 30 天，带筛选和搜索）", ""]
     out += ["## 上次运行", "", f"{last_run['time']}（北京时间）", "",
             "| 来源 | 结果 | 新增 | 备注 |", "|---|---|---|---|"]
     labels = {"ok": "✅ 正常", "blocked": "⛔ 被网站拦截", "error": "⚠️ 出错"}
@@ -719,6 +744,7 @@ def render_readme(rows: list[dict[str, str]], last_run: dict) -> str:
         "- `data/items.csv`：抓到过的全部商品，一行一件，可以直接用 Excel 打开",
         "- `thumbs/`：缩略图",
         "- `scrape.py`：抓取脚本；`.github/workflows/daily.yml`：每天定时运行",
+        "- `build_site.py` 和 `page/template.html`：生成网页版（输出到 build/，不进仓库）",
         "", "## 字段", "",
         "| 字段 | 含义 |", "|---|---|",
         "| first_seen | 第一次抓到的日期 |",
@@ -730,6 +756,7 @@ def render_readme(rows: list[dict[str, str]], last_run: dict) -> str:
         "| release | 发售（出货）月份 |",
         "| preorder_start / preorder_end | 预订开始 / 截止 |",
         "| status | 预订中、再贩、官网限定、旧品补录等 |",
+        "| rating / adult | HPOI 的观感等级 / 成人向标记（1 = 是） |",
         "| jan | JAN 条码 |",
         "| image_url / thumb | 原图链接 / 缩略图路径 |",
         "", "## 手动运行", "",
@@ -738,6 +765,9 @@ def render_readme(rows: list[dict[str, str]], last_run: dict) -> str:
         "如实标明身份（`figure-news/0.1`），遵守各站 robots.txt，"
         "同一网站两次请求至少隔 3 秒（HPOI 按它的要求隔 5 秒），"
         "遇到人机验证直接跳过、不绕过。AmiAmi、HobbySearch、电击 Hobby 因此没有收录。",
+        "", "## 成人向", "",
+        "HPOI 里观感成熟的条目照常录入并标为成人向，只记录文字和链接，不保存图片。"
+        "HLJ 的成人向商品要登录并通过年龄验证才会显示，匿名访问看不到，所以没有收录。",
         "", "_本文件由 scrape.py 自动生成，手动修改会在下次运行时被覆盖。_", "",
     ]
     return "\n".join(out)
