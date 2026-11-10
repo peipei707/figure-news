@@ -1,19 +1,19 @@
 {
-  "time": "2026-11-09 17:48",
+  "time": "2026-11-10 12:46",
   "sources": {
     "HPOI": {
       "status": "ok",
-      "new": 1,
+      "new": 11,
       "note": ""
     },
     "GoodSmile": {
       "status": "ok",
-      "new": 0,
+      "new": 15,
       "note": ""
     },
     "HLJ": {
       "status": "ok",
-      "new": 0,
+      "new": 13,
       "note": ""
     }
   }
