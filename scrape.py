@@ -7,7 +7,7 @@ items it has not seen before, and writes:
     data/items.csv            every item seen so far, one row per item
     data/last_run.json        how each source did on the latest run
     daily/YYYY-MM-DD.md       the items first seen that day, with thumbnails
-    thumbs/<source>/<id>.jpg  small thumbnails used by the daily pages
+    thumbs/<source>/<id>.webp the product pictures, scaled down, for the pages
     README.md                 the latest day and an index of recent days
 
 The crawler says who it is, follows robots.txt, waits between requests to
@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import html as html_entities
 import io
 import json
 import os
@@ -49,7 +50,14 @@ USER_AGENT = "figure-news/0.1 (personal hobby tracker)"
 BEIJING = timezone(timedelta(hours=8))
 TIMEOUT = 30
 MAX_IMAGE_BYTES = 15 * 1024 * 1024
-THUMB_SIZE = (200, 200)
+# Thumbnails fit inside this box. Product pictures are mostly upright, and the
+# web page shows them in 3:4 tiles about 200px wide on screens of 2x density.
+THUMB_BOX = (400, 560)
+THUMB_QUALITY = 76
+# Earlier versions saved 200px JPEG thumbnails. Each run replaces up to this
+# many of them, newest first, with the larger picture; older ones are left.
+THUMB_UPGRADES = int(os.environ.get("FIGURE_NEWS_THUMB_UPGRADES", "80"))
+THUMB_UPGRADE_DAYS = 60
 
 # Seconds between two requests to the same host. HPOI's robots.txt asks for 5.
 DEFAULT_DELAY = float(os.environ.get("FIGURE_NEWS_DELAY", "3"))
@@ -63,7 +71,8 @@ HPOI_CATEGORIES = [c.strip() for c in os.environ.get("FIGURE_NEWS_HPOI_CATEGORIE
 BACKFILL_MONTHS = 3
 BACKFILL = "旧品补录"
 # HPOI 属性 words that mark an adult-oriented item, and the listing filter that
-# shows only 观感成熟 items.
+# shows only 观感成熟 items. HPOI lists these like any other entry, cover picture
+# included, so they are recorded the same way and carry the mark.
 ADULT_WORDS = ("观感成熟", "R18", "R-18", "18禁", "成人")
 HPOI_ADULT_FILTER = "r18=315"
 
@@ -107,7 +116,7 @@ class Item:
     preorder_end: str = ""
     status: str = ""
     rating: str = ""  # HPOI's 观感 level: 观感安心 / 观感温和 / 观感成熟
-    adult: str = ""  # "1" for adult-oriented items; they are recorded without images
+    adult: str = ""  # "1" for items HPOI rates 观感成熟
     jan: str = ""
     image_url: str = ""
     thumb: str = ""
@@ -253,6 +262,17 @@ def name_of(value) -> str:
     return clean(value) if isinstance(value, str) else ""
 
 
+def unescaped(value):
+    """ld+json is script text, so its strings still hold entities: Heaven&#x27;s -> Heaven's."""
+    if isinstance(value, str):
+        return html_entities.unescape(value)
+    if isinstance(value, list):
+        return [unescaped(v) for v in value]
+    if isinstance(value, dict):
+        return {k: unescaped(v) for k, v in value.items()}
+    return value
+
+
 def ld_product(soup: BeautifulSoup) -> dict:
     for tag in soup.find_all("script", type="application/ld+json"):
         try:
@@ -263,10 +283,10 @@ def ld_product(soup: BeautifulSoup) -> dict:
             if not isinstance(node, dict):
                 continue
             if node.get("@type") == "Product":
-                return node
+                return unescaped(node)
             main = node.get("mainEntity")
             if isinstance(main, dict) and main.get("@type") == "Product":
-                return main
+                return unescaped(main)
     return {}
 
 
@@ -355,6 +375,17 @@ def zh_status(text: str) -> str:
     for ja, zh in STATUS_ZH:
         text = text.replace(ja, zh)
     return text
+
+
+SALES_ZH = {"販売": "首发", "再販": "再贩", "再販予約受注": "再贩受注", "予約受注": "受注"}
+
+
+def sales_history(text: str) -> str:
+    """'【販売：2024年06月】【再販：2027年05月】' -> '首发 2024年06月、再贩 2027年05月'."""
+    parts = re.findall(r"【([^：:】]+)[：:]\s*([^】]+)】", text)
+    if not parts:
+        return clean(text)
+    return "、".join(f"{SALES_ZH.get(clean(k), zh_status(clean(k)))} {clean(v)}" for k, v in parts)
 
 
 # --------------------------------------------------------------------------
@@ -527,13 +558,20 @@ def gsc_detail(html: str, it: Item) -> None:
     spec = specs.get("仕様", "")
     size = re.search(r"(全高|全長|高さ|サイズ)[：:]?\s*約?\s*[\d.]+\s*(mm|cm)", spec)
     it.size = size.group(0) if size else ""
-    it.extra = f"仕様：{spec}" if spec else ""
     scale = re.search(r"1/\d+", spec)
     it.scale = scale.group(0) if scale else ("ノンスケール" if "ノンスケール" in spec else "")
     for label, value in specs.items():
         if any(word in label for word in ("発売", "発送", "出荷")):
             it.release = month_of(value)
             break
+    # The shop does not say when a new item ships. A rerun has a 関連情報 row,
+    # 【販売：2024年06月】【再販：2027年05月】, and the latest month in it is this run's.
+    history = specs.get("関連情報", "")
+    months = [month_of(m) for m in re.findall(r"20\d{2}\s*年\s*\d{1,2}\s*月", history)]
+    if months and not re.fullmatch(r"\d{4}-\d{2}", it.release):
+        it.release = max(months)
+    notes = [f"仕様：{spec}" if spec else "", f"发售记录：{sales_history(history)}" if history else ""]
+    it.extra = "；".join(note for note in notes if note)
 
 
 # --------------------------------------------------------------------------
@@ -543,6 +581,9 @@ def gsc_detail(html: str, it: Item) -> None:
 # results are the same with or without its AdultItem=0 filter.
 HLJ_SEARCH = ("https://www.hlj.com/search/?GenreCode2=Figures&MacroType2=Completed+Models"
               "&StockLevel=All+Future+Release&dateAdded2=-7&Sort=std+desc&Page={page}")
+
+
+HLJ_RERUN = re.compile(r"\((?:re-?release|re-?issue|re-?run)\)", re.I)
 
 
 def hlj_total(html: str) -> str | None:
@@ -563,7 +604,7 @@ def hlj_list(html: str) -> list[Item]:
         name = clean(link.get_text())
         img = block.find("img")
         thumb = img.get("src", "") if img else ""
-        tags = ["预订中"] + (["再贩"] if "(Rerelease)" in name else [])
+        tags = ["预订中"] + (["再贩"] if HLJ_RERUN.search(name) else [])
         items.append(Item(
             source="HLJ", id=code, url=urljoin("https://www.hlj.com/", link["href"]), name=name,
             status=" · ".join(tags), thumb_src=urljoin("https://www.hlj.com/", thumb) if thumb else "",
@@ -668,26 +709,68 @@ def list_new(src: Source, fetcher: Fetcher, known: set[tuple[str, str]]) -> list
     return list(found.values())
 
 
+def thumb_file(source: str, item_id: str) -> Path:
+    return THUMB_DIR / source / (re.sub(r"[^A-Za-z0-9_-]", "_", item_id) + ".webp")
+
+
 def save_thumb(fetcher: Fetcher, it: Item) -> None:
-    url = it.thumb_src or it.image_url
-    if not url or it.adult:  # adult items are recorded without images
-        return
-    dest = THUMB_DIR / it.source / (re.sub(r"[^A-Za-z0-9_-]", "_", it.id) + ".jpg")
+    """Save the item's picture, scaled to fit THUMB_BOX, as thumbs/<source>/<id>.webp.
+
+    The product page's own picture comes first: it is larger and usually shows
+    the whole figure. The listing's small picture is the fallback.
+    """
+    dest = thumb_file(it.source, it.id)
     if not dest.exists():
-        try:
-            img = Image.open(io.BytesIO(fetcher.image(url)))
-            if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
-                rgba = img.convert("RGBA")
-                img = Image.new("RGB", rgba.size, "white")
-                img.paste(rgba, mask=rgba.getchannel("A"))
-            img = img.convert("RGB")
-            img.thumbnail(THUMB_SIZE)
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            img.save(dest, "JPEG", quality=80, optimize=True, progressive=True)
-        except Exception as exc:  # a missing thumbnail is not worth failing the item over
-            log(f"   thumbnail {it.source} {it.id}: {exc}")
+        for url in dict.fromkeys(u for u in (it.image_url, it.thumb_src) if u):
+            try:
+                img = Image.open(io.BytesIO(fetcher.image(url)))
+                if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+                    rgba = img.convert("RGBA")
+                    img = Image.new("RGB", rgba.size, "white")
+                    img.paste(rgba, mask=rgba.getchannel("A"))
+                img = img.convert("RGB")
+                img.thumbnail(THUMB_BOX, Image.Resampling.LANCZOS)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                img.save(dest, "WEBP", quality=THUMB_QUALITY, method=6)
+                break
+            except Exception as exc:  # a missing thumbnail is not worth failing the item over
+                log(f"   thumbnail {it.source} {it.id}: {type(exc).__name__}: {exc}")
+        else:
             return
     it.thumb = dest.relative_to(ROOT).as_posix()
+
+
+def upgrade_thumbs(fetcher: Fetcher, rows: list[dict[str, str]], today: date) -> set[str]:
+    """Give recent rows the larger picture.
+
+    Rows with no picture come first (earlier versions saved none for 观感成熟
+    entries), then the small JPEGs earlier versions saved are replaced. Newest
+    items first, THUMB_UPGRADES per run. Returns the days whose daily page now
+    points at a different file.
+    """
+    recent = [r for r in sorted(rows, key=lambda r: r["first_seen"], reverse=True)
+              if r["image_url"] and 0 <= age_days(r, today) <= THUMB_UPGRADE_DAYS]
+    days: set[str] = set()
+    left = THUMB_UPGRADES
+    for group in ([r for r in recent if not r["thumb"]], [r for r in recent if r["thumb"].endswith(".jpg")]):
+        misses = 0
+        for row in group[:left]:
+            left -= 1
+            it = Item(**{k: row.get(k, "") for k in CSV_FIELDS})
+            it.thumb = ""
+            save_thumb(fetcher, it)
+            if it.thumb:
+                if row["thumb"]:
+                    (ROOT / row["thumb"]).unlink(missing_ok=True)
+                row["thumb"] = it.thumb
+                days.add(row["first_seen"])
+                misses = 0
+            else:
+                misses += 1
+                if misses >= 5:  # the site is refusing or down; the next run tries again
+                    log("   stopped after 5 pictures in a row could not be fetched")
+                    break
+    return days
 
 
 def run_source(src: Source, fetcher: Fetcher, known: set[tuple[str, str]], today: date) -> tuple[list[Item], dict]:
@@ -831,18 +914,14 @@ def render_day(day: str, rows: list[dict[str, str]]) -> str:
     for key, items in groups.items():
         if not items:
             continue
-        adult = [r for r in items if r["adult"]]
-        fresh = [r for r in items if not r["adult"] and r["status"] != BACKFILL]
-        old = [r for r in items if not r["adult"] and r["status"] == BACKFILL]
+        fresh = [r for r in items if r["status"] != BACKFILL]
+        old = [r for r in items if r["status"] == BACKFILL]
         out += [f"## {SOURCES[key]}（{len(items)}）", ""]
         if fresh:
             out += table(fresh) + [""]
         if old:
             out += [f"<details><summary>{BACKFILL} {len(old)} 件：HPOI 新收录、但早已发售的老商品</summary>", "",
                     *table(old), "", "</details>", ""]
-        if adult:
-            out += [f"<details open><summary>成人向 {len(adult)} 件：只记录文字和链接，不保存图片</summary>", "",
-                    *table(adult), "", "</details>", ""]
     return "\n".join(out)
 
 
@@ -853,7 +932,9 @@ def render_readme(rows: list[dict[str, str]], last_run: dict) -> str:
            "每天早上（北京时间 7:40 左右）自动抓一次 HPOI、Good Smile 官网、HLJ 的新品，按天汇总成表。", ""]
     if days:
         out += [f"**最新一期：[{days[0]}](daily/{days[0]}.md)（{counts[days[0]]} 件）**", ""]
-    out += [f"**公开网页：[{PAGES_URL}]({PAGES_URL})**（GitHub Pages，每天抓取后自动更新，最近 30 天）", ""]
+    out += [f"**公开网页：[{PAGES_URL}]({PAGES_URL})**（GitHub Pages，每天抓取后自动更新，最近 30 天）", "",
+            "网页把同一件商品在几个来源的记录合成一张卡片，按类型分组，可以搜索、筛选、收藏，"
+            "还有一个按截订时间排的「预订」视图。", ""]
     out += ["## 上次运行", "", f"{last_run['time']}（北京时间）", "",
             "| 来源 | 结果 | 新增 | 备注 |", "|---|---|---|---|"]
     labels = {"ok": "✅ 正常", "blocked": "⛔ 被网站拦截", "error": "⚠️ 出错"}
@@ -866,9 +947,10 @@ def render_readme(rows: list[dict[str, str]], last_run: dict) -> str:
         "", "## 文件", "",
         "- `daily/日期.md`：当天第一次出现的商品，带缩略图",
         "- `data/items.csv`：抓到过的全部商品，一行一件，可以直接用 Excel 打开",
-        "- `thumbs/`：缩略图",
+        "- `thumbs/`：商品图，缩到 400×560 以内的 WebP",
         "- `scrape.py`：抓取脚本；`.github/workflows/daily.yml`：每天定时运行",
-        "- `build_site.py` 和 `page/template.html`：生成网页版（输出到 build/，不进仓库）",
+        "- `build_site.py` 和 `page/`：生成网页版（输出到 build/，不进仓库）",
+        "- `page/aliases.json`：作品、厂商在三个来源里的不同写法对照表，网页靠它统一成中文叫法，可以直接往里加",
         "", "## 字段", "",
         "| 字段 | 含义 |", "|---|---|",
         "| first_seen | 第一次抓到的日期 |",
@@ -877,12 +959,12 @@ def render_readme(rows: list[dict[str, str]], last_run: dict) -> str:
         "| maker / series / character | 厂商 / 作品 / 角色 |",
         "| category / scale | 类型、产品线 / 比例 |",
         "| price / currency / price_note | 价格 / 币种 / 备注（如 HPOI 的人民币参考价） |",
-        "| release | 发售（出货）月份 |",
+        "| release | 发售（出货）月份。Good Smile 官网只给再贩商品写，新品的月份来自 HLJ 或 HPOI 的同款 |",
         "| preorder_start / preorder_end | 预订开始 / 截止 |",
         "| status | 预订中、再贩、官网限定、旧品补录等 |",
         "| rating / adult | HPOI 的观感等级 / 成人向标记（1 = 是） |",
         "| size / material / sculptor / painter | 尺寸 / 材质 / 原型 / 涂装 |",
-        "| bonus / progress / extra | 特典 / HPOI 进程（开订、出荷等最新动态）/ 其他信息（如 HLJ 取消截止日） |",
+        "| bonus / progress / extra | 特典 / HPOI 进程（开订、出荷等最新动态）/ 其他信息（如 HLJ 取消截止日、Good Smile 再贩商品的发售记录） |",
         "| follows / wants / preorders / owned | HPOI 的关注 / 想买 / 预订 / 已入人数 |",
         "| score / score_count / views | HPOI 评分 / 评分人数 / 访问量 |",
         "| stats_date | 人气数据的读取日期（收录当天、第 2 天、第 7 天各读一次） |",
@@ -895,7 +977,8 @@ def render_readme(rows: list[dict[str, str]], last_run: dict) -> str:
         "同一网站两次请求至少隔 3 秒（HPOI 按它的要求隔 5 秒），"
         "遇到人机验证直接跳过、不绕过。AmiAmi、HobbySearch、电击 Hobby 因此没有收录。",
         "", "## 成人向", "",
-        "HPOI 里观感成熟的条目照常录入并标为成人向，只记录文字和链接，不保存图片。"
+        "HPOI 里观感成熟的条目和原站一样照常收录、照常显示封面，只多一个「成人向」标记，"
+        "网页的「筛选」里可以把它们关掉。"
         "HLJ 的成人向商品要登录并通过年龄验证才会显示，匿名访问看不到，所以没有收录。",
         "", "_本文件由 scrape.py 自动生成，手动修改会在下次运行时被覆盖。_", "",
     ]
@@ -929,15 +1012,22 @@ def main() -> int:
             return False
         if args.refresh_days:
             return 0 <= age_days(row, today) < args.refresh_days
+        if row["source"] == "GoodSmile":
+            # A rerun's page says when it ships. Rows without that month are read again during their
+            # first week: it fills in rows saved before the month was parsed, and late additions.
+            return "再贩" in row["status"] and not row["release"] and 0 <= age_days(row, today) <= 7
         # Popularity grows after an announcement, so HPOI items are read again a few days on.
         return row["source"] == "HPOI" and row["status"] != BACKFILL and age_days(row, today) in STATS_AGES
 
     log("== refresh")
     log(f"   {refresh_rows(fetcher, rows, pick, today)} items re-read")
+    log("== thumbnails")
+    redrawn = upgrade_thumbs(fetcher, rows, today)
+    log(f"   larger pictures saved for items first seen on {len(redrawn)} days")
     save_rows(rows)
     last_run = {"time": now.strftime("%Y-%m-%d %H:%M"), "sources": status}
     LAST_RUN.write_text(json.dumps(last_run, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    for day in sorted({r["first_seen"] for r in new_rows}):
+    for day in sorted({r["first_seen"] for r in new_rows} | redrawn):
         DAILY_DIR.mkdir(exist_ok=True)
         (DAILY_DIR / f"{day}.md").write_text(render_day(day, [r for r in rows if r["first_seen"] == day]),
                                              encoding="utf-8")
