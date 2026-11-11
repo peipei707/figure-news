@@ -71,7 +71,8 @@ HPOI_CATEGORIES = [c.strip() for c in os.environ.get("FIGURE_NEWS_HPOI_CATEGORIE
 BACKFILL_MONTHS = 3
 BACKFILL = "旧品补录"
 # HPOI 属性 words that mark an adult-oriented item, and the listing filter that
-# shows only 观感成熟 items.
+# shows only 观感成熟 items. HPOI lists these like any other entry, cover picture
+# included, so they are recorded the same way and carry the mark.
 ADULT_WORDS = ("观感成熟", "R18", "R-18", "18禁", "成人")
 HPOI_ADULT_FILTER = "r18=315"
 
@@ -115,7 +116,7 @@ class Item:
     preorder_end: str = ""
     status: str = ""
     rating: str = ""  # HPOI's 观感 level: 观感安心 / 观感温和 / 观感成熟
-    adult: str = ""  # "1" for adult-oriented items; they are recorded without images
+    adult: str = ""  # "1" for items HPOI rates 观感成熟
     jan: str = ""
     image_url: str = ""
     thumb: str = ""
@@ -718,8 +719,6 @@ def save_thumb(fetcher: Fetcher, it: Item) -> None:
     The product page's own picture comes first: it is larger and usually shows
     the whole figure. The listing's small picture is the fallback.
     """
-    if it.adult:  # adult items are recorded without images
-        return
     dest = thumb_file(it.source, it.id)
     if not dest.exists():
         for url in dict.fromkeys(u for u in (it.image_url, it.thumb_src) if u):
@@ -742,34 +741,35 @@ def save_thumb(fetcher: Fetcher, it: Item) -> None:
 
 
 def upgrade_thumbs(fetcher: Fetcher, rows: list[dict[str, str]], today: date) -> set[str]:
-    """Replace the small JPEG thumbnails earlier versions saved with the larger picture.
+    """Give recent rows the larger picture.
 
-    Newest items first, THUMB_UPGRADES per run. Returns the days whose daily
-    page now points at a different file.
+    Rows with no picture come first (earlier versions saved none for 观感成熟
+    entries), then the small JPEGs earlier versions saved are replaced. Newest
+    items first, THUMB_UPGRADES per run. Returns the days whose daily page now
+    points at a different file.
     """
+    recent = [r for r in sorted(rows, key=lambda r: r["first_seen"], reverse=True)
+              if r["image_url"] and 0 <= age_days(r, today) <= THUMB_UPGRADE_DAYS]
     days: set[str] = set()
-    tried = misses = 0
-    for row in sorted(rows, key=lambda r: r["first_seen"], reverse=True):
-        if tried >= THUMB_UPGRADES:
-            break
-        if not row["thumb"].endswith(".jpg") or row["adult"] or not row["image_url"]:
-            continue
-        if not 0 <= age_days(row, today) <= THUMB_UPGRADE_DAYS:
-            continue
-        tried += 1
-        it = Item(**{k: row.get(k, "") for k in CSV_FIELDS})
-        it.thumb = ""
-        save_thumb(fetcher, it)
-        if it.thumb:
-            (ROOT / row["thumb"]).unlink(missing_ok=True)
-            row["thumb"] = it.thumb
-            days.add(row["first_seen"])
-            misses = 0
-        else:
-            misses += 1
-            if misses >= 5:  # the site is refusing or down; the next run tries again
-                log("   stopped after 5 pictures in a row could not be fetched")
-                break
+    left = THUMB_UPGRADES
+    for group in ([r for r in recent if not r["thumb"]], [r for r in recent if r["thumb"].endswith(".jpg")]):
+        misses = 0
+        for row in group[:left]:
+            left -= 1
+            it = Item(**{k: row.get(k, "") for k in CSV_FIELDS})
+            it.thumb = ""
+            save_thumb(fetcher, it)
+            if it.thumb:
+                if row["thumb"]:
+                    (ROOT / row["thumb"]).unlink(missing_ok=True)
+                row["thumb"] = it.thumb
+                days.add(row["first_seen"])
+                misses = 0
+            else:
+                misses += 1
+                if misses >= 5:  # the site is refusing or down; the next run tries again
+                    log("   stopped after 5 pictures in a row could not be fetched")
+                    break
     return days
 
 
@@ -914,18 +914,14 @@ def render_day(day: str, rows: list[dict[str, str]]) -> str:
     for key, items in groups.items():
         if not items:
             continue
-        adult = [r for r in items if r["adult"]]
-        fresh = [r for r in items if not r["adult"] and r["status"] != BACKFILL]
-        old = [r for r in items if not r["adult"] and r["status"] == BACKFILL]
+        fresh = [r for r in items if r["status"] != BACKFILL]
+        old = [r for r in items if r["status"] == BACKFILL]
         out += [f"## {SOURCES[key]}（{len(items)}）", ""]
         if fresh:
             out += table(fresh) + [""]
         if old:
             out += [f"<details><summary>{BACKFILL} {len(old)} 件：HPOI 新收录、但早已发售的老商品</summary>", "",
                     *table(old), "", "</details>", ""]
-        if adult:
-            out += [f"<details open><summary>成人向 {len(adult)} 件：只记录文字和链接，不保存图片</summary>", "",
-                    *table(adult), "", "</details>", ""]
     return "\n".join(out)
 
 
@@ -981,7 +977,8 @@ def render_readme(rows: list[dict[str, str]], last_run: dict) -> str:
         "同一网站两次请求至少隔 3 秒（HPOI 按它的要求隔 5 秒），"
         "遇到人机验证直接跳过、不绕过。AmiAmi、HobbySearch、电击 Hobby 因此没有收录。",
         "", "## 成人向", "",
-        "HPOI 里观感成熟的条目照常录入并标为成人向，只记录文字和链接，不保存图片。"
+        "HPOI 里观感成熟的条目和原站一样照常收录、照常显示封面，只多一个「成人向」标记，"
+        "网页的「筛选」里可以把它们关掉。"
         "HLJ 的成人向商品要登录并通过年龄验证才会显示，匿名访问看不到，所以没有收录。",
         "", "_本文件由 scrape.py 自动生成，手动修改会在下次运行时被覆盖。_", "",
     ]

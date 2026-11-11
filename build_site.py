@@ -488,12 +488,11 @@ def product_of(members: list[dict[str, str]], aliases: Aliases, rate: float) -> 
         item["hot"] = hot
         put("prog", [e for e in hpoi["progress"].split(" | ") if e])
 
-    if not adult:
-        for src in IMAGE_FROM:
-            thumb = by_source.get(src, {}).get("thumb")
-            if thumb and (ROOT / thumb).is_file():
-                item["img"] = thumb
-                break
+    for src in IMAGE_FROM:
+        thumb = by_source.get(src, {}).get("thumb")
+        if thumb and (ROOT / thumb).is_file():
+            item["img"] = thumb
+            break
     return item
 
 

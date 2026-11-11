@@ -11,7 +11,7 @@
   };
   const FLAGS = { pre: "可预订", re: "再贩", ltd: "官网限定", bonus: "附特典", mto: "受注生产", fav: "已收藏" };
   const QUICK_FLAGS = ["pre", "re", "ltd", "bonus"];
-  const TAGS = { re: "再贩", ltd: "限定", bonus: "特典", mto: "受注", old: "旧品" };
+  const TAGS = { adult: "成人向", re: "再贩", ltd: "限定", bonus: "特典", mto: "受注", old: "旧品" };
   const UNIT = { JPY: "日元", USD: "美元", CNY: "元" };
   // Bands are in renminbi, the one figure every priced item has.
   const BANDS = [
@@ -121,6 +121,7 @@
     const opens = raw.open ? daysTo(raw.open) : null;
     if (left != null && left < 0) flags.delete("pre");
     else if (opens != null && opens <= 0) flags.add("pre");
+    if (raw.adult) flags.add("adult");
     it.flagSet = flags;
     it.left = left != null && left >= 0 ? left : null;
     it.opens = opens != null && opens >= 0 && !raw.pe ? opens : null;
@@ -247,17 +248,15 @@
   };
 
   function typeSections(list) {
-    const plain = list.filter((it) => !it.adult && !it.flagSet.has("old"));
+    const plain = list.filter((it) => !it.flagSet.has("old"));
     const out = TYPE_ORDER.map((t) => ({ title: TYPES[t], items: plain.filter((it) => it.type === t).sort(byScore) }));
     out.push({ title: "其它", items: plain.filter((it) => !TYPES[it.type]).sort(byScore) });
-    out.push({ title: "成人向", note: "只记文字和链接，图片请到原站查看", rows: true,
-      items: list.filter((it) => it.adult && !it.flagSet.has("old")).sort(byScore) });
     out.push({ title: "旧品补录", note: "HPOI 新建的条目，发售已超过三个月",
       items: list.filter((it) => it.flagSet.has("old")).sort(byScore) });
     return out.filter((sec) => sec.items.length);
   }
   function daySections(list) {
-    const order = (a, b) => Number(!!a.adult) - Number(!!b.adult) || typeRank(a) - typeRank(b) || byScore(a, b);
+    const order = (a, b) => typeRank(a) - typeRank(b) || byScore(a, b);
     return days.map(({ day }) => ({ title: dayInfo(day).long, items: list.filter((it) => it.day === day).sort(order) }))
       .filter((sec) => sec.items.length);
   }
@@ -326,8 +325,7 @@
       box.append(img);
     } else {
       box.classList.add("none");
-      if (it.adult) box.append(el("b", null, "成人向"));
-      if (!it.adult || !small) box.append(el("span", null, it.adult ? "图片见原站" : small ? "无图" : "暂无图片"));
+      box.append(el("span", null, small ? "无图" : "暂无图片"));
     }
     return box;
   }
@@ -600,7 +598,7 @@
         ["", fmt(fresh.filter((it) => it.flagSet.has("pre")).length), "件可预订"],
         fresh.some((it) => it.flagSet.has("re")) && ["", fmt(fresh.filter((it) => it.flagSet.has("re")).length), "件再贩"],
         priced.length >= 3 && ["价格中位约", `¥${fmt(priced[priced.length >> 1])}`]]);
-      for (const pick of choosePicks(fresh.filter((it) => !it.adult))) picks.append(pick);
+      for (const pick of choosePicks(fresh)) picks.append(pick);
     }
     picks.hidden = !picks.childElementCount;
   }
@@ -758,7 +756,7 @@
       row.append(text, input);
       show.append(row);
     };
-    sw("adult", "成人向条目", "只有文字和链接，没有图片");
+    sw("adult", "成人向条目", "HPOI 标为「观感成熟」的条目");
     sw("old", "旧品补录", "HPOI 新建、但早已发售的老商品");
     body.append(show);
 
@@ -909,7 +907,7 @@
     }
     for (const key of ["re", "ltd", "bonus", "mto"]) if (it.flagSet.has(key)) pills.append(el("span", "pill", FLAGS[key]));
     if (it.flagSet.has("old")) pills.append(el("span", "pill", "旧品补录"));
-    if (it.adult) pills.append(el("span", "pill", "成人向"));
+    if (it.adult) pills.append(el("span", "pill", it.rating ? `成人向（${it.rating}）` : "成人向"));
     head.append(pills);
     main.append(head);
 
@@ -981,7 +979,6 @@
       const i = e.indexOf("：");
       return i > 0 ? [e.slice(0, i), e.slice(i + 1)] : ["动态", e];
     }))));
-    if (it.adult) main.append(el("p", "fine", "成人向商品不在这里显示图片，请到上面的来源页面查看。"));
 
     grid.append(pic, main);
     return grid;
