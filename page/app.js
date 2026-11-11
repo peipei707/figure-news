@@ -8,6 +8,8 @@
     HPOI: { name: "HPOI", short: "HPOI" },
     GoodSmile: { name: "Good Smile 官网", short: "GSC" },
     HLJ: { name: "HLJ", short: "HLJ" },
+    Sofmap: { name: "Sofmap", short: "Sofmap" },
+    Solaris: { name: "Solaris Japan", short: "Solaris" },
   };
   const FLAGS = { pre: "可预订", re: "再贩", ltd: "官网限定", bonus: "附特典", mto: "受注生产", fav: "已收藏" };
   const QUICK_FLAGS = ["pre", "re", "ltd", "bonus"];
@@ -1095,8 +1097,9 @@
       $("fresh").append(dot, `${+m[1]}/${+m[2]} ${m[3]} 更新`);
       $("fresh").title = bad ? `有 ${bad} 个来源这次没抓到，详见页面底部` : "三个来源都抓取正常（北京时间）";
     }
-    $("rate-note").textContent = `页面上的 ¥ 一律指人民币，日元价格写作「日元」。约合价按 1 日元 ≈ ${RATE} 元估算`
-      + "（取自 HPOI 近期标注的中位数），HPOI 自己标了人民币参考价的直接用它的。";
+    $("rate-note").textContent = `页面上的 ¥ 一律指人民币，日元、美元价格写作「日元」「美元」。约合价按 1 日元 ≈ ${RATE} 元估算`
+      + `（取自 HPOI 近期标注的中位数），HPOI 自己标了人民币参考价的直接用它的；美元按 1 美元 ≈ ${Number(DATA.usd) || 7.1} 元粗算。`;
+    $("brand-sub").textContent = `每天汇总 ${Object.keys(SOURCES).length} 个来源的新品`;
   }
   const THEMES = { auto: ["auto", "外观：跟随系统"], light: ["sun", "外观：浅色"], dark: ["moon", "外观：深色"] };
   function paintTheme() {
