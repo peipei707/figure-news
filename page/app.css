@@ -121,11 +121,10 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 @media (min-width: 900px) {
   .lede { grid-template-columns: minmax(0, auto) minmax(0, 1fr); align-items: end; column-gap: 32px; padding-top: 20px; }
   .lede .headline { grid-area: 1 / 1; }
-  .lede .days {
-    grid-area: 1 / 2; justify-self: end; max-width: 100%;
-    /* the strip fades out at its right edge when there are more days than fit */
-    padding-right: 28px; -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 44px), transparent);
-    mask-image: linear-gradient(90deg, #000 calc(100% - 44px), transparent);
+  .lede .days { grid-area: 1 / 2; justify-self: end; max-width: 100%; }
+  .lede .days.more {
+    -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 48px), transparent);
+    mask-image: linear-gradient(90deg, #000 calc(100% - 48px), transparent);
   }
   .lede .picks { grid-column: 1 / -1; }
 }

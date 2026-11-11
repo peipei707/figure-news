@@ -553,6 +553,12 @@
       b.classList.toggle("unseen", fresh);
       b.title = fresh ? "这一天还没看过" : "";
     }
+    fadeDays();
+  }
+  // The strip fades out at the right only while there is more of it to scroll to.
+  function fadeDays() {
+    const box = $("days");
+    box.classList.toggle("more", box.scrollLeft + box.clientWidth < box.scrollWidth - 4);
   }
   // The line under the headline: a few counted facts, each kept on one line.
   function facts(parts) {
@@ -940,7 +946,7 @@
       ["角色", it.chr],
       ["厂商", makers.length > 1 ? makers : makers[0]],
       ["发行", it.publisher],
-      ["类型", [TYPES[it.type], ...(it.line || [])].filter(Boolean).join(" · ")],
+      ["类型", [...new Set([TYPES[it.type], ...(it.line || [])].filter(Boolean))].join(" · ")],
       ["比例", it.scale],
       ["尺寸", it.size],
       ["材质", it.material],
@@ -1152,6 +1158,8 @@
     e.preventDefault();
     box.scrollLeft += e.deltaY;
   }, { passive: false });
+  $("days").addEventListener("scroll", fadeDays, { passive: true });
+  window.addEventListener("resize", fadeDays);
   if ("IntersectionObserver" in window) {
     new IntersectionObserver(([entry]) => {
       $("bar").classList.toggle("stuck", !entry.isIntersecting && entry.boundingClientRect.top < 60);
