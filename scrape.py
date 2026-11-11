@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""figure-news: a daily digest of new figures from HPOI, Good Smile and HLJ.
+"""figure-news: a daily digest of new figures from HPOI, Good Smile, HLJ, Sofmap and Solaris Japan.
 
 Each run reads every source's "new items" listing, opens the detail page of
 items it has not seen before, and writes:
@@ -61,7 +61,10 @@ THUMB_UPGRADE_DAYS = 60
 
 # Seconds between two requests to the same host. HPOI's robots.txt asks for 5.
 DEFAULT_DELAY = float(os.environ.get("FIGURE_NEWS_DELAY", "3"))
-HOST_DELAY = {"www.hpoi.net": 5.0, "rfx.hpoi.net": 5.0}
+HOST_DELAY = {"www.hpoi.net": 5.0, "rfx.hpoi.net": 5.0, "a.sofmap.com": 15.0}
+# Sofmap answers 403 to the sixth product page read within a few minutes, so its
+# listing is the source of record and only a few product pages are read per run.
+SOFMAP_DETAILS = int(os.environ.get("FIGURE_NEWS_SOFMAP_DETAILS", "3"))
 # Detail pages opened per source per run; the rest wait for the next run.
 MAX_DETAILS = int(os.environ.get("FIGURE_NEWS_MAX_DETAILS", "40"))
 # HPOI categories to follow (100 = 手办), comma-separated, e.g. "100,500".
@@ -76,7 +79,7 @@ BACKFILL = "旧品补录"
 ADULT_WORDS = ("观感成熟", "R18", "R-18", "18禁", "成人")
 HPOI_ADULT_FILTER = "r18=315"
 
-SOURCES = {"HPOI": "HPOI", "GoodSmile": "Good Smile 官网", "HLJ": "HLJ"}
+SOURCES = {"HPOI": "HPOI", "GoodSmile": "Good Smile 官网", "HLJ": "HLJ", "Sofmap": "Sofmap", "Solaris": "Solaris Japan"}
 
 CSV_FIELDS = [
     "first_seen", "source", "id", "name", "name_alt", "maker", "series", "character", "category",
@@ -158,6 +161,8 @@ class Blocked(Exception):
 def looks_like_challenge(resp: requests.Response) -> bool:
     if resp.headers.get("cf-mitigated") == "challenge":
         return True
+    if resp.headers.get("x-amzn-waf-action") in ("challenge", "captcha"):  # AWS WAF: HTTP 202, empty body
+        return True
     if resp.status_code in (403, 429, 503):
         head = resp.text[:5000]
         return any(s in head for s in ("Just a moment", "Attention Required", "challenge-platform", "cf-chl"))
@@ -170,6 +175,7 @@ class Fetcher:
         self.session.headers["User-Agent"] = USER_AGENT
         self.robots: dict[str, RobotFileParser] = {}
         self.last_hit: dict[str, float] = {}
+        self.refused: dict[str, str] = {}  # hosts that said no during this run, and how
 
     def _throttle(self, host: str) -> None:
         delay = HOST_DELAY.get(host, DEFAULT_DELAY)
@@ -183,6 +189,8 @@ class Fetcher:
 
     def _get(self, url: str, **kwargs) -> requests.Response:
         host = urlparse(url).netloc
+        if host in self.refused:  # it already said no: do not knock again in this run
+            raise Blocked(self.refused[host])
         for attempt in (1, 2):
             self._throttle(host)
             try:
@@ -220,13 +228,24 @@ class Fetcher:
         resp = self._get(url)
         if looks_like_challenge(resp):
             raise Blocked(f"{urlparse(url).netloc} 返回人机验证（HTTP {resp.status_code}）")
+        if resp.status_code in (403, 429):  # refused or asked to slow down: stop asking for this run
+            host = urlparse(url).netloc
+            self.refused[host] = f"{host} 拒绝了请求（HTTP {resp.status_code}），这次先停"
+            raise Blocked(self.refused[host])
         resp.raise_for_status()
         declared = "charset=" in resp.headers.get("Content-Type", "").lower()
-        return resp.content.decode(resp.encoding if declared else "utf-8", errors="replace")
+        encoding = resp.encoding if declared and resp.encoding else "utf-8"
+        if encoding.lower().replace("-", "_") in ("shift_jis", "sjis", "x_sjis", "windows_31j", "ms932"):
+            encoding = "cp932"  # what Japanese sites that say Shift_JIS actually send (①, ～, ㈱ ...)
+        return resp.content.decode(encoding, errors="replace")
 
     def image(self, url: str) -> bytes:
         self._allow(url)
         with self._get(url, stream=True) as resp:
+            if resp.status_code == 429:  # for a picture a 403 can just mean "no such file"; a 429 cannot
+                host = urlparse(url).netloc
+                self.refused[host] = f"{host} 要求放慢（HTTP 429），这次先停"
+                raise Blocked(self.refused[host])
             resp.raise_for_status()
             data = io.BytesIO()
             for chunk in resp.iter_content(64 * 1024):
@@ -648,6 +667,150 @@ def hlj_detail(html: str, it: Item) -> None:
 
 
 # --------------------------------------------------------------------------
+# Sofmap (a.sofmap.com): figures and dolls whose pre-orders opened in the last 14 days.
+# A large Japanese retailer; prices include tax and every listing carries its JAN.
+
+# The calendar page fills itself from this list fragment, newest pre-order start first.
+SOFMAP_LIST = ("https://a.sofmap.com/calendar_list_parts.aspx?pno={page}&search_type=reserv&product_type=ALL"
+               "&dispcnt=100&date_from_add=-14&date_to_add=0&gid=002140020")
+SOFMAP_OPEN, SOFMAP_FULL = "预订中", "预订已满"
+
+
+def sofmap_list(html: str) -> list[Item]:
+    soup = BeautifulSoup(html, "html.parser")
+    items, seen = [], set()
+    for li in soup.select("ul.product_list > li"):
+        link = li.select_one("a.product_name[name]")
+        sku = re.search(r"_(\d+)$", link["name"]) if link else None
+        if not sku or sku.group(1) in seen:  # the fragment holds every item twice, once per layout
+            continue
+        seen.add(sku.group(1))
+        img = li.find("img")
+        src = img.get("src", "") if img else ""
+        jan = re.search(r"/(\d{13})\.", src)  # .../product/large/4573102739810.jpg
+        brand, price, opened = li.select_one(".brand"), li.select_one(".price"), li.select_one(".date")
+        day = re.search(r"(\d{4})/(\d{1,2})/(\d{1,2})", opened.get_text() if opened else "")
+        name = clean(link.get_text())
+        scale = re.search(r"(?<![\d/])1/\d+(?!\d)", name)
+        items.append(Item(
+            source="Sofmap", id=sku.group(1), url=f"https://a.sofmap.com/product_detail.aspx?sku={sku.group(1)}",
+            name=name, maker=clean(brand.get_text()) if brand else "", scale=scale.group(0) if scale else "",
+            price=price_digits(price.get_text()) if price else "", currency="JPY",
+            jan=jan.group(1) if jan else "",
+            # the product page's first picture, 1000px, sits beside the listing's 250px one
+            image_url=f"https://image.sofmap.com/images/product/pim/{jan.group(1)}_A01.jpg" if jan else "",
+            preorder_start=f"{day.group(1)}-{int(day.group(2)):02d}-{int(day.group(3)):02d}" if day else "",
+            status=" · ".join([SOFMAP_FULL if "soldout" in (li.get("class") or []) else SOFMAP_OPEN]
+                              + (["再贩"] if "再販" in link.get_text() else [])),
+            thumb_src=src,
+        ))
+    return items
+
+
+def sofmap_detail(html: str, it: Item) -> None:
+    """What the listing does not say: release month, series, product line, size."""
+    soup = BeautifulSoup(html, "html.parser")
+    prod = ld_product(soup)
+    if prod:
+        it.name = it.name or clean(prod.get("name"))
+        image = first(prod.get("image"))
+        it.image_url = image if isinstance(image, str) else it.image_url
+        offer = first(prod.get("offers")) or {}
+        it.price = price_digits(offer.get("price")) or it.price
+    specs = label_pairs(soup)
+    it.maker = specs.get("メーカー") or it.maker
+    if re.fullmatch(r"\d{8,14}", specs.get("JANコード", "")):
+        it.jan = specs["JANコード"]
+    it.series = specs.get("作品タイトル/愛称", "")
+    it.character = specs.get("キャラクター", "")
+    it.release = month_of(specs.get("メーカー発売日") or specs.get("発売日") or "")
+    # 在庫 starts with the state, "限定予約中 ..." or "限定数終了 ...", and goes on with boilerplate
+    # that mentions 終了 either way, so only the first word counts.
+    stock = specs.get("在庫", "").split(" ")[0]
+    state = SOFMAP_FULL if "終了" in stock else SOFMAP_OPEN if "予約" in stock else ""
+    if state:
+        it.status = " · ".join([state] + [t for t in it.status.split(" · ") if t and t not in (SOFMAP_OPEN, SOFMAP_FULL)])
+    # トップ > ホビー > フィギュア・ドール > フィギュア・ドール > フィギュアーツ: the last step is the product line
+    crumbs = [clean(a.get_text()) for a in soup.select("ol.breadcrumb a")]
+    it.category = crumbs[-1] if crumbs and crumbs[-1] not in ("トップ", "ホビー", "フィギュア・ドール") else ""
+    text = clean(soup.get_text(" "))
+    size = re.search(r"サイズ[：:]\s*([^・【※]{2,40})", text)
+    it.size = clean(size.group(1)) if size else ""
+    material = re.search(r"(?:材質|素材)[：:]\s*([^・【※]{2,40})", text)
+    it.material = clean(material.group(1)) if material else ""
+
+
+# --------------------------------------------------------------------------
+# Solaris Japan (solarisjapan.com): an export shop on Shopify. Its figure collection
+# lists the newest products first; prices are in US dollars.
+
+SOLARIS_LIST = "https://solarisjapan.com/collections/figures/products.json?limit=50&page={page}"
+
+
+def solaris_list(text: str) -> list[Item]:
+    try:
+        products = json.loads(text).get("products", [])
+    except (ValueError, AttributeError):
+        return []
+    items = []
+    for p in products:
+        if not isinstance(p, dict) or not p.get("id") or not p.get("handle"):
+            continue
+        tags = [t for t in p.get("tags") or [] if isinstance(t, str)]
+
+        def meta(key: str) -> str:  # tags look like "meta-franchise-Blue Archive"
+            return next((clean(t.split("-", 2)[2]) for t in tags if t.startswith(f"meta-{key}-")), "")
+
+        variants = {v.get("title"): v for v in p.get("variants") or [] if isinstance(v, dict)}
+        early = variants.get("Early Bird")  # the pre-order price, offered until release
+        offer = early if early and early.get("available") else variants.get("Brand New") or early or {}
+        price = re.fullmatch(r"\d+(?:\.\d+)?", str(offer.get("price") or ""))
+        adult = "nsfw" in tags
+        image = first(p.get("images")) or {}
+        kind = meta("figure")
+        title = clean(p.get("title"))
+        # Titles read "Franchise - Character - Line - 1/7 (Maker)"; half the products have no franchise tag.
+        parts = title.split(" - ")
+        # Vendors read "A, B" or "A as ManufacturerB"; the first name is the maker.
+        maker = re.split(r",| as Manufacturer", clean(p.get("vendor")))[0].strip()
+        # The tag is the franchise in English ("Jojo's Bizarre Adventure") but sometimes only its family
+        # ("Honkai" for "Honkai: Star Rail - ..."); then the title's own first part says more.
+        franchise, head = meta("franchise"), parts[0] if len(parts) > 1 else ""
+        series = head if head and (not franchise or franchise.lower() in head.lower()) else franchise
+        items.append(Item(
+            source="Solaris", id=str(p["id"]), url=f"https://solarisjapan.com/products/{p['handle']}",
+            name=title, maker=maker, series=series,
+            character=meta("character"), category="" if kind == "General" else kind,
+            price=str(round(float(price.group(0)))) if price else "", currency="USD" if price else "",
+            status="预订中" if early and early.get("available") else "现货" if offer.get("available") else "",
+            adult="1" if adult else "",
+            # The shop blurs pictures of items it tags nsfw until the visitor clicks through. They are
+            # not HPOI's edited covers, so these items are recorded without a picture.
+            thumb_src="" if adult else clean(image.get("src") if isinstance(image, dict) else ""),
+        ))
+    return items
+
+
+def solaris_detail(html: str, it: Item) -> None:
+    soup = BeautifulSoup(html, "html.parser")
+    prod = ld_product(soup)
+    if prod:
+        code = clean(str(prod.get("gtin14") or prod.get("gtin13") or prod.get("gtin") or prod.get("sku") or ""))
+        code = code[1:] if re.fullmatch(r"0\d{13}", code) else code
+        it.jan = code if re.fullmatch(r"\d{8,14}", code) else ""
+        image = first(prod.get("image"))
+        it.image_url = image if isinstance(image, str) and not it.adult else ""
+        it.maker = it.maker or name_of(prod.get("brand"))
+    text = clean(soup.get_text(" "))
+    release = re.search(r"Release Date\s+((?:\d{1,2}\.?\s+)?[A-Za-z]{3,9}\.?\s+20\d{2}|20\d{2}[-/.]\d{1,2})", text)
+    it.release = month_of(release.group(1)) if release else ""
+    size = re.search(r"Dimensions\s+((?:[A-Z]=\d+(?:\.\d+)?\s*mm\s*(?:\([^)]*\))?[\s,x×]*)+)", text)
+    it.size = clean(re.sub(r"\([^)]*\)", "", size.group(1)).replace("=", " ")).rstrip(" ,x×") if size else ""
+    scale = re.search(r"(?<![\d/])1/\d+(?!\d)", it.name)
+    it.scale = scale.group(0) if scale else ""
+
+
+# --------------------------------------------------------------------------
 # Running a source
 
 
@@ -659,6 +822,7 @@ class Source:
     parse_detail: Callable[[str, Item], None]
     newest_first: bool  # stop paging once a page shows items we already have
     total_of: Callable[[str], str | None] | None = None  # result count, must stay the same on every page
+    details: bool = True  # read each new item's own page; off where the listing has to be enough
 
 
 SOURCE_DEFS = [
@@ -673,6 +837,9 @@ SOURCE_DEFS = [
     Source("GoodSmile", [[GSC_HOME]], gsc_list, gsc_detail, newest_first=False),
     Source("HLJ", [[HLJ_SEARCH.format(page=p) for p in (1, 2, 3, 4)]], hlj_list, hlj_detail,
            newest_first=False, total_of=hlj_total),
+    Source("Sofmap", [[SOFMAP_LIST.format(page=p) for p in (1, 2)]], sofmap_list, sofmap_detail, newest_first=True,
+           details=False),
+    Source("Solaris", [[SOLARIS_LIST.format(page=p) for p in (1, 2)]], solaris_list, solaris_detail, newest_first=True),
 ]
 
 
@@ -783,7 +950,8 @@ def run_source(src: Source, fetcher: Fetcher, known: set[tuple[str, str]], today
     done, note, blocked = [], "", False
     for it in listed[:MAX_DETAILS]:
         try:
-            src.parse_detail(fetcher.text(it.url), it)
+            if src.details:
+                src.parse_detail(fetcher.text(it.url), it)
         except Blocked as exc:
             note, blocked = str(exc), True
             break
@@ -817,15 +985,17 @@ def refresh_rows(fetcher: Fetcher, rows: list[dict[str, str]], pick: Callable[[d
                  today: date) -> int:
     """Read the detail page of each picked row again and keep what it now says."""
     done = 0
+    refused: set[str] = set()  # a source that says no is left alone for the rest of the run
     for row in rows:
-        if not pick(row):
+        if row["source"] in refused or not pick(row):
             continue
         it = Item(**{k: row.get(k, "") for k in CSV_FIELDS})
         try:
             SOURCE_BY_KEY[row["source"]].parse_detail(fetcher.text(it.url), it)
         except Blocked as exc:
-            log(f"   refresh stopped: {exc}")
-            break
+            log(f"   refresh of {row['source']} stopped: {exc}")
+            refused.add(row["source"])
+            continue
         except Exception as exc:  # one bad page should not stop the rest
             log(f"   refresh {row['source']} {row['id']}: {type(exc).__name__}: {exc}")
             continue
@@ -929,7 +1099,7 @@ def render_readme(rows: list[dict[str, str]], last_run: dict) -> str:
     counts = Counter(r["first_seen"] for r in rows if r["first_seen"])
     days = sorted(counts, reverse=True)
     out = ["# figure-news 手办新品日报", "",
-           "每天早上（北京时间 7:40 左右）自动抓一次 HPOI、Good Smile 官网、HLJ 的新品，按天汇总成表。", ""]
+           "每天早上（北京时间 7:40 左右）自动抓一次 HPOI、Good Smile 官网、HLJ、Sofmap、Solaris Japan 的新品，按天汇总成表。", ""]
     if days:
         out += [f"**最新一期：[{days[0]}](daily/{days[0]}.md)（{counts[days[0]]} 件）**", ""]
     out += [f"**公开网页：[{PAGES_URL}]({PAGES_URL})**（GitHub Pages，每天抓取后自动更新，最近 30 天）", "",
@@ -950,7 +1120,7 @@ def render_readme(rows: list[dict[str, str]], last_run: dict) -> str:
         "- `thumbs/`：商品图，缩到 400×560 以内的 WebP",
         "- `scrape.py`：抓取脚本；`.github/workflows/daily.yml`：每天定时运行",
         "- `build_site.py` 和 `page/`：生成网页版（输出到 build/，不进仓库）",
-        "- `page/aliases.json`：作品、厂商在三个来源里的不同写法对照表，网页靠它统一成中文叫法，可以直接往里加",
+        "- `page/aliases.json`：作品、厂商在各个来源里的不同写法对照表，网页靠它统一成中文叫法，可以直接往里加",
         "", "## 字段", "",
         "| 字段 | 含义 |", "|---|---|",
         "| first_seen | 第一次抓到的日期 |",
@@ -958,10 +1128,10 @@ def render_readme(rows: list[dict[str, str]], last_run: dict) -> str:
         "| name / name_alt | 名称 / 日文原名（HPOI 提供） |",
         "| maker / series / character | 厂商 / 作品 / 角色 |",
         "| category / scale | 类型、产品线 / 比例 |",
-        "| price / currency / price_note | 价格 / 币种 / 备注（如 HPOI 的人民币参考价） |",
+        "| price / currency / price_note | 价格 / 币种（Solaris Japan 是美元）/ 备注（如 HPOI 的人民币参考价） |",
         "| release | 发售（出货）月份。Good Smile 官网只给再贩商品写，新品的月份来自 HLJ 或 HPOI 的同款 |",
         "| preorder_start / preorder_end | 预订开始 / 截止 |",
-        "| status | 预订中、再贩、官网限定、旧品补录等 |",
+        "| status | 预订中、预订已满、现货、再贩、官网限定、旧品补录等 |",
         "| rating / adult | HPOI 的观感等级 / 成人向标记（1 = 是） |",
         "| size / material / sculptor / painter | 尺寸 / 材质 / 原型 / 涂装 |",
         "| bonus / progress / extra | 特典 / HPOI 进程（开订、出荷等最新动态）/ 其他信息（如 HLJ 取消截止日、Good Smile 再贩商品的发售记录） |",
@@ -974,19 +1144,23 @@ def render_readme(rows: list[dict[str, str]], last_run: dict) -> str:
         "GitHub 仓库页 → Actions → daily → Run workflow。",
         "", "## 抓取规矩", "",
         "如实标明身份（`figure-news/0.1`），遵守各站 robots.txt，"
-        "同一网站两次请求至少隔 3 秒（HPOI 按它的要求隔 5 秒），"
-        "遇到人机验证直接跳过、不绕过。AmiAmi、HobbySearch、电击 Hobby 因此没有收录。",
+        "同一网站两次请求至少隔 3 秒（HPOI 按它的要求隔 5 秒；Sofmap 隔 15 秒，而且每次最多读 3 个商品页，"
+        "其余只用它的列表），遇到人机验证直接跳过、不绕过，被拒绝（403、429）当次就停。",
+        "", "试过但没有收录的：AmiAmi、HobbySearch、Hobby Stock（列表页）会弹人机验证；"
+        "Animate、Joshin、Tokyo Otaku Mode 直接拒绝程序访问；电击 Hobby 的 robots.txt 不允许抓取；"
+        "CDJapan 不允许抓搜索页和图片。",
         "", "## 成人向", "",
         "HPOI 里观感成熟的条目和原站一样照常收录、照常显示封面，只多一个「成人向」标记，"
         "网页的「筛选」里可以把它们关掉。"
-        "HLJ 的成人向商品要登录并通过年龄验证才会显示，匿名访问看不到，所以没有收录。",
+        "HLJ 的成人向商品要登录并通过年龄验证才会显示，匿名访问看不到，所以没有收录。"
+        "Solaris Japan 标为 NSFW 的商品，原站要点一下才显示图片，这里只记文字和链接，不保存图片。",
         "", "_本文件由 scrape.py 自动生成，手动修改会在下次运行时被覆盖。_", "",
     ]
     return "\n".join(out)
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Collect new figures from HPOI, Good Smile and HLJ.")
+    parser = argparse.ArgumentParser(description="Collect new figures from HPOI, Good Smile, HLJ, Sofmap and Solaris Japan.")
     parser.add_argument("--refresh-days", type=int, default=0, metavar="N",
                         help="also re-read the detail page of every item first seen in the last N days")
     args = parser.parse_args()
@@ -1006,8 +1180,17 @@ def main() -> int:
     rows += new_rows
 
     just_added = {(r["source"], r["id"]) for r in new_rows}
+    # Sofmap's listing has no release month. Its product page does, but only a few may be read per
+    # run, so they go to rows no other source has dated yet (same JAN), newest first.
+    dated = {r["jan"] for r in rows if r["jan"] and r["release"] and r["source"] != "Sofmap"}
+    undated = [r for r in sorted(rows, key=lambda r: r["first_seen"], reverse=True)
+               if r["source"] == "Sofmap" and not r["release"] and r["jan"] not in dated
+               and 0 <= age_days(r, today) <= 30]
+    sofmap_now = {r["id"] for r in undated[:SOFMAP_DETAILS]}
 
     def pick(row: dict[str, str]) -> bool:
+        if row["source"] == "Sofmap":
+            return row["id"] in sofmap_now
         if (row["source"], row["id"]) in just_added:
             return False
         if args.refresh_days:

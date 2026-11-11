@@ -43,14 +43,18 @@ OUT = ROOT / "build"
 DAYS = 30
 BEIJING = timezone(timedelta(hours=8))
 FALLBACK_JPY_TO_CNY = 0.047
+USD_TO_CNY = 7.1  # a fixed, rough figure: only Solaris Japan prices in dollars, and the page marks it as an estimate
 BACKFILL = "旧品补录"
 TILE = 3 / 4  # the page's picture tiles, width over height: product shots are mostly upright
 
 # Whose wording wins when sources disagree: HPOI writes Chinese, Good Smile is
-# the maker's own Japanese listing, HLJ is an English shop listing.
-SOURCES = ["HPOI", "GoodSmile", "HLJ"]
-PRICE_FROM = ["GoodSmile", "HPOI", "HLJ"]  # the official price before a shop's
-IMAGE_FROM = ["GoodSmile", "HPOI", "HLJ"]
+# the maker's own Japanese listing, Sofmap a Japanese shop's, HLJ and Solaris
+# Japan are English shop listings.
+SOURCES = ["HPOI", "GoodSmile", "Sofmap", "HLJ", "Solaris"]
+PRICE_FROM = ["GoodSmile", "HPOI", "Sofmap", "HLJ", "Solaris"]  # the official price before a shop's
+IMAGE_FROM = ["GoodSmile", "HPOI", "Sofmap", "Solaris", "HLJ"]
+# What each shop's price means, shown beside it.
+PRICE_NOTE = {"GoodSmile": "含税", "Sofmap": "含税", "HLJ": "不含日本消费税", "Solaris": "美元价，预订期优惠价"}
 
 # Product types, in the order the page lists them.
 TYPES = {
@@ -118,18 +122,22 @@ class Aliases:
         tail = r"(?![a-z0-9])" if word[-1].isalnum() else ""
         return re.compile(head + re.escape(word) + tail)
 
-    def ip_of(self, series: str) -> str:
+    def ip_of(self, series: str, shortest: int = 1) -> str:
+        """The display name of the series a text names. `shortest` leaves out spellings shorter than
+        that, for free text such as product names, where ワンピース may just mean a dress."""
         text = norm(series)
         if not text:
             return ""
         for name, word, pattern in self.ip:
-            if pattern.search(text) if pattern else word in text:
+            if len(word) >= shortest and (pattern.search(text) if pattern else word in text):
                 return name
         return ""
 
     def maker_of(self, maker: str) -> str:
-        key = bare(re.sub(r"株式会社|有限会社|\(株\)|（株）|co\.,? ?ltd\.?|inc\.?$", "", maker, flags=re.I))
-        return self.maker.get(key) or maker
+        """'FuRyu(フリュー)' and 'フリュー' -> 'FuRyu'; a name the table does not know stays as written."""
+        plain = re.sub(r"株式会社|有限会社|\(株\)|（株）|co\.,? ?ltd\.?|inc\.?$", "", maker, flags=re.I)
+        short = re.sub(r"\s*[(（][^)）]*[)）]\s*$", "", plain)  # a reading in brackets after the name
+        return self.maker.get(bare(plain)) or self.maker.get(bare(short)) or short.strip() or maker
 
     def line_of(self, category: str) -> str:
         return self.line.get(norm(category), category)
@@ -139,11 +147,20 @@ class Aliases:
 # One row -> tidy facts
 
 
-def tidy_name(name: str, source: str) -> str:
+def tidy_name(name: str, source: str, maker: str = "") -> str:
     name = squash(name)
     if source == "HLJ":  # "1/7 Azur Lane: Hakuhou (Rerelease)" -> "Azur Lane: Hakuhou"
         name = re.sub(r"\s*\((?:re-?release|re-?issue|re-?run)\)\s*$", "", name, flags=re.I)
         name = re.sub(r"^1/\d+\s+(?:scale\s+)?", "", name, flags=re.I)
+    elif source == "Sofmap":  # "【再販】塗装済み完成品 1/7 魔法騎士レイアース 龍咲海" -> "魔法騎士レイアース 龍咲海"
+        name = re.sub(r"^(?:【[^】]*】\s*)+", "", name)
+        name = re.sub(r"^(?:塗装済み?完成品|塗装済み?可動フィギュア|完成品フィギュア)\s*", "", name)
+        name = re.sub(r"^1/\d+\s*(?:スケール)?\s+", "", name)
+    elif source == "Solaris":  # "Azur Lane - Cheshire - 1/7 (AniGame)" -> "Azur Lane - Cheshire"
+        name = re.sub(r"\s*\[[^\]]*\]\s*$", "", name)
+        if maker and name.endswith(")") and bare(maker) in bare(name.rsplit("(", 1)[-1]):
+            name = name.rsplit("(", 1)[0].strip()
+        name = re.sub(r"\s+-\s+1/\d+\s*$", "", name)
     return name
 
 
@@ -278,7 +295,7 @@ def classify(categories: list[str], names: list[str], spec: str, scale: str) -> 
         return "plush"
     if "Q版人形" in bases or CHIBI.search(text):
         return "chibi"
-    if ACTION.search(text) or (ACTION.search(norm(spec)) and "ねんどろいど" not in text):
+    if ACTION.search(text) or (ACTION.search(norm(spec)) and "ねんどろいど" not in text) or "action" in cats.split():
         return "action"
     if any(b in ("其它", "生物/幻灵", "场景") for b in bases) or cats in ("その他", "その他(グッズ)"):
         return "goods"
@@ -293,6 +310,8 @@ def cny_of(price: int | None, currency: str, note: str, rate: float) -> int | No
     m = re.search(r"([\d,]+)\s*元", note)
     if m:
         return int(m.group(1).replace(",", ""))
+    if currency == "USD":
+        return round(price * USD_TO_CNY)
     return round(price * rate) if currency == "JPY" else None
 
 
@@ -356,13 +375,15 @@ def product_of(members: list[dict[str, str]], aliases: Aliases, rate: float) -> 
     by_source = {m["source"]: m for m in reversed(members)}
     adult = any(m["adult"] for m in members)
 
-    names = uniq(tidy_name(m["name"], m["source"]) for m in members)
+    names = uniq(tidy_name(m["name"], m["source"], m["maker"]) for m in members)
     name = names[0] if names else members[0]["id"]
     alts = uniq([*names[1:], *(squash(m["name_alt"]) for m in members)])
     alts = [a for a in alts if bare(a) != bare(name)]
 
     series = uniq(tidy_series(part) for m in members for part in re.split(r"[、，]\s*", m["series"]) if part)
     ip = next((hit for hit in (aliases.ip_of(s) for s in series) if hit), "") or (series[0] if series else "")
+    if not ip:  # a listing with no series field often names the series in the product name
+        ip = next((hit for hit in (aliases.ip_of(m["name"], shortest=6) for m in members) if hit), "")
     makers = uniq(m["maker"] for m in members)
     maker = aliases.maker_of(makers[0]) if makers else ""
 
@@ -392,10 +413,8 @@ def product_of(members: list[dict[str, str]], aliases: Aliases, rate: float) -> 
                 offer["cny"] = cny
         if m["price_note"]:
             offer["note"] = m["price_note"]
-        elif m["source"] == "GoodSmile" and price is not None:
-            offer["note"] = "含税"
-        elif m["source"] == "HLJ" and price is not None:
-            offer["note"] = "不含日本消费税"
+        elif price is not None and m["source"] in PRICE_NOTE:
+            offer["note"] = PRICE_NOTE[m["source"]]
         for key, field in (("ps", "preorder_start"), ("pe", "preorder_end")):
             if day_of(m[field]):
                 offer[key] = m[field][:10]
@@ -556,6 +575,7 @@ def build_data(rows: list[dict[str, str]], today: date, last_run: dict) -> dict:
     items.sort(key=lambda p: (p["day"], p["k"]), reverse=True)
     return {
         "rate": rate,
+        "usd": USD_TO_CNY,
         "updated": last_run.get("time", ""),
         "runs": last_run.get("sources", {}),
         "types": TYPES,
