@@ -307,7 +307,12 @@
     const box = el("div", "shot");
     if (it.img && /^thumbs\//.test(it.img)) {
       if (it.fit) box.classList.add("whole");
-      if (/^#[0-9a-f]{6}$/i.test(it.bg || "")) box.style.setProperty("--frame", it.bg);
+      // Behind a picture shown whole: its own background colour, or its two edge colours as a gradient.
+      const tone = (v) => typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v);
+      if (tone(it.bg)) box.style.setProperty("--frame", it.bg);
+      else if (Array.isArray(it.bg) && tone(it.bg[0]) && tone(it.bg[1])) {
+        box.style.setProperty("--frame", `linear-gradient(${it.bg[2] === "h" ? "90deg" : "180deg"}, ${it.bg[0]}, ${it.bg[1]})`);
+      }
       const img = el("img");
       img.alt = "";
       img.decoding = "async";
@@ -936,6 +941,7 @@
       ["预订期", it.pe ? `${it.ps ? `${it.ps} 至 ` : ""}${it.pe}（${leftText(daysTo(it.pe))}）` : ""],
       ["开订", opens],
       ["进展", it.stage && it.stage !== "预订中" ? it.stage : ""],
+      ["发售记录", it.history],
       ["首次收录", it.day],
     ])));
 

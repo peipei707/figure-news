@@ -248,10 +248,13 @@ main { min-height: 46vh; padding-block: 2px 44px; }
 @media (min-width: 560px) { .grid { gap: 26px 16px; grid-template-columns: repeat(auto-fill, minmax(188px, 1fr)); } }
 .card { position: relative; min-width: 0; container-type: inline-size; }
 .tile { display: block; text-decoration: none; border-radius: var(--radius); }
+/* Pictures sit in upright 3:4 tiles; the small ones in rows and highlight cards are square. */
 .shot {
-  position: relative; aspect-ratio: 1; max-width: 100%; overflow: hidden; border-radius: var(--radius);
+  position: relative; aspect-ratio: 3 / 4; max-width: 100%; overflow: hidden; border-radius: var(--radius);
   background: var(--frame, var(--sunken));
 }
+.row-hit .shot, .pick .shot { aspect-ratio: 1; }
+.row-hit .shot img, .pick .shot img { object-position: 50% 18%; }
 .shot::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px rgba(110, 118, 130, .2); pointer-events: none; }
 .shot img { width: 100%; height: 100%; object-fit: cover; }
 .shot.whole img { object-fit: contain; }
@@ -370,7 +373,7 @@ dialog::backdrop { background: var(--veil); }
 .sheet-body { overflow-y: auto; overscroll-behavior: contain; padding: 16px max(16px, env(safe-area-inset-right, 0px)) calc(22px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
 .sheet-grid { display: grid; gap: 16px; }
 .sheet-grid > * { min-width: 0; }
-.sheet-pic .shot { max-width: min(300px, 76vw); margin-inline: auto; }
+.sheet-pic .shot { max-width: min(270px, 68vw); margin-inline: auto; }
 @media (min-width: 820px) {
   .sheet-body { padding: 24px; }
   .sheet-grid { grid-template-columns: 340px minmax(0, 1fr); gap: 28px; align-items: start; }

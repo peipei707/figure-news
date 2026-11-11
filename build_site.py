@@ -44,6 +44,7 @@ DAYS = 30
 BEIJING = timezone(timedelta(hours=8))
 FALLBACK_JPY_TO_CNY = 0.047
 BACKFILL = "旧品补录"
+TILE = 3 / 4  # the page's picture tiles, width over height: product shots are mostly upright
 
 # Whose wording wins when sources disagree: HPOI writes Chinese, Good Smile is
 # the maker's own Japanese listing, HLJ is an English shop listing.
@@ -469,8 +470,8 @@ def product_of(members: list[dict[str, str]], aliases: Aliases, rate: float) -> 
     for m in members:
         for part in m["extra"].split("；"):
             label, _, value = part.partition("：")
-            if value and label in ("发行", "原画", "仕様"):
-                item.setdefault({"发行": "publisher", "原画": "artist", "仕様": "spec"}[label], value)
+            if value and label in ("发行", "原画", "仕様", "发售记录"):
+                item.setdefault({"发行": "publisher", "原画": "artist", "仕様": "spec", "发售记录": "history"}[label], value)
 
     hpoi = by_source.get("HPOI")
     if hpoi and hpoi["stats_date"]:
@@ -501,24 +502,36 @@ def product_of(members: list[dict[str, str]], aliases: Aliases, rate: float) -> 
 
 
 def frame_of(path: Path) -> dict:
-    """How a thumbnail sits in the page's square frame.
+    """How a thumbnail sits in the page's upright tile.
 
-    Near-square pictures fill it. Others are shown whole, on the colour of their
-    own corners when those agree, so a product shot on white keeps a white frame.
+    A picture close to the tile's shape fills it. One on a plain background is
+    shown whole on that colour, so a cut-out on white keeps a white tile. The
+    rest fill the tile while the crop stays under about a quarter; past that
+    they are shown whole, and the bands left over take the colours of the
+    picture's own edges.
     """
     if Image is None:
         return {}
+
+    def tone(rgb, box) -> str:
+        return "#%02x%02x%02x" % rgb.crop(box).resize((1, 1), Image.Resampling.BOX).getpixel((0, 0))
+
     try:
         with Image.open(path) as im:
             w, h = im.size
-            if abs(w / h - 1) <= 0.08:
+            shape = (w / h) / TILE  # 1 = the tile's shape, above 1 = wider
+            if 0.88 <= shape <= 1.15:
                 return {}
             rgb = im.convert("RGB")
             corners = [rgb.getpixel(xy) for xy in ((1, 1), (w - 2, 1), (1, h - 2), (w - 2, h - 2))]
-            spread = max(max(c[i] for c in corners) - min(c[i] for c in corners) for i in range(3))
-            if spread > 24:
-                return {"fit": 1}
-            return {"fit": 1, "bg": "#%02x%02x%02x" % tuple(round(sum(c[i] for c in corners) / 4) for i in range(3))}
+            if max(max(c[i] for c in corners) - min(c[i] for c in corners) for i in range(3)) <= 24:
+                return {"fit": 1, "bg": "#%02x%02x%02x" % tuple(round(sum(c[i] for c in corners) / 4) for i in range(3))}
+            if 0.75 <= shape <= 1.4:
+                return {}
+            edge = max(2, round(min(w, h) * 0.04))
+            if shape > 1:  # bands above and below
+                return {"fit": 1, "bg": [tone(rgb, (0, 0, w, edge)), tone(rgb, (0, h - edge, w, h)), "v"]}
+            return {"fit": 1, "bg": [tone(rgb, (0, 0, edge, h)), tone(rgb, (w - edge, 0, w, h)), "h"]}
     except Exception:  # an unreadable picture is shown as it is
         return {}
 
