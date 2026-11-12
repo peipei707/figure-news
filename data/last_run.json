@@ -1,9 +1,9 @@
 {
-  "time": "2026-11-11 22:10",
+  "time": "2026-11-12 09:50",
   "sources": {
     "HPOI": {
       "status": "ok",
-      "new": 0,
+      "new": 4,
       "note": ""
     },
     "GoodSmile": {
@@ -19,12 +19,12 @@
     "Sofmap": {
       "status": "ok",
       "new": 40,
-      "note": "还有 60 件留到下次"
+      "note": "还有 20 件留到下次"
     },
     "Solaris": {
       "status": "ok",
-      "new": 40,
-      "note": "还有 10 件留到下次"
+      "new": 10,
+      "note": ""
     }
   }
 }
