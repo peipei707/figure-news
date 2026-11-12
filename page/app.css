@@ -93,6 +93,8 @@ svg { fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round
 .fresh { margin: 0; font-size: 12px; line-height: 1.35; text-align: right; color: var(--ink-3); }
 .fresh .dot { display: inline-block; width: 7px; height: 7px; margin-right: 5px; border-radius: 50%; background: var(--ok); }
 .fresh .dot.bad { background: var(--due); }
+.fresh .dot.late { background: var(--soon); }
+.fresh small { display: block; font-size: inherit; color: var(--soon); }
 .icon-btn {
   flex: none; display: grid; place-items: center; width: 38px; height: 38px; border: 1px solid var(--line);
   border-radius: 10px; background: var(--surface); color: var(--ink-2);
@@ -447,4 +449,11 @@ td.n { font-variant-numeric: tabular-nums; }
   position: fixed; left: 50%; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); z-index: 60; translate: -50% 0;
   max-width: calc(100vw - 32px); padding: 9px 16px; border-radius: 999px; background: var(--ink); color: var(--surface);
   font-size: 13px; box-shadow: var(--shadow); pointer-events: none;
+}
+/* Shown when a newer build is out and the page was not reloaded for it. */
+.newer {
+  position: fixed; left: 50%; bottom: calc(22px + env(safe-area-inset-bottom, 0px)); z-index: 25; translate: -50% 0;
+  max-width: calc(100vw - 32px); min-height: 40px; padding: 9px 18px; border: 0; border-radius: 999px;
+  background: var(--brand); color: #fff; font: inherit; font-size: 14px; font-weight: 600; white-space: nowrap;
+  box-shadow: var(--shadow); cursor: pointer;
 }

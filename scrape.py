@@ -95,8 +95,10 @@ DETAIL_FIELDS = [
     "size", "material", "sculptor", "painter", "bonus", "progress", "extra",
     "follows", "wants", "preorders", "owned", "score", "score_count", "views", "stats_date",
 ]
-# Days after an HPOI item is first seen when its page is read again for popularity.
+# Days after an HPOI item is first seen when its page is read again for popularity, and how many
+# days after the last of them a run that missed it may still take the reading.
 STATS_AGES = (2, 7)
+STATS_CATCH_UP = 3
 
 
 @dataclass
@@ -981,6 +983,24 @@ def age_days(row: dict[str, str], today: date) -> int:
         return -1
 
 
+def stats_due(row: dict[str, str], today: date) -> bool:
+    """Whether an HPOI item's popularity should be read again today.
+
+    The counts are read when the item is first seen and again 2 and 7 days later. If no run
+    happened on one of those days, the next run takes the reading instead; a second run on the
+    same day does not take it twice.
+    """
+    age = age_days(row, today)
+    reached = [a for a in STATS_AGES if a <= age]
+    if not reached or age > STATS_AGES[-1] + STATS_CATCH_UP:
+        return False
+    try:
+        read_at = (date.fromisoformat(row["stats_date"]) - date.fromisoformat(row["first_seen"])).days
+    except ValueError:
+        read_at = 0
+    return read_at < reached[-1]
+
+
 def refresh_rows(fetcher: Fetcher, rows: list[dict[str, str]], pick: Callable[[dict[str, str]], bool],
                  today: date) -> int:
     """Read the detail page of each picked row again and keep what it now says."""
@@ -1099,7 +1119,7 @@ def render_readme(rows: list[dict[str, str]], last_run: dict) -> str:
     counts = Counter(r["first_seen"] for r in rows if r["first_seen"])
     days = sorted(counts, reverse=True)
     out = ["# figure-news 手办新品日报", "",
-           "每天早上（北京时间 7:40 左右）自动抓一次 HPOI、Good Smile 官网、HLJ、Sofmap、Solaris Japan 的新品，按天汇总成表。", ""]
+           "每天清晨（北京时间）自动抓一次 HPOI、Good Smile 官网、HLJ、Sofmap、Solaris Japan 的新品，按天汇总成表。", ""]
     if days:
         out += [f"**最新一期：[{days[0]}](daily/{days[0]}.md)（{counts[days[0]]} 件）**", ""]
     out += [f"**公开网页：[{PAGES_URL}]({PAGES_URL})**（GitHub Pages，每天抓取后自动更新，最近 30 天）", "",
@@ -1140,8 +1160,12 @@ def render_readme(rows: list[dict[str, str]], last_run: dict) -> str:
         "| stats_date | 人气数据的读取日期（收录当天、第 2 天、第 7 天各读一次） |",
         "| jan | JAN 条码 |",
         "| image_url / thumb | 原图链接 / 缩略图路径 |",
-        "", "## 手动运行", "",
-        "GitHub 仓库页 → Actions → daily → Run workflow。",
+        "", "## 运行时间", "",
+        "定时任务在北京时间 2:23、4:17、6:07 各触发一次：哪一次先跑起来就由它抓取，"
+        "后面的看到当天已经抓过就直接结束，所以每天只抓一遍；只有某个来源当次出错（不是被拒绝）时，后一次才会重抓。",
+        "", "排三次是因为 GitHub 的定时任务不准时，忙的时候会晚几个小时"
+        "（原来只排 7:37 一次，实际拖到过 11 点和 12 点多）。",
+        "", "想马上抓一次：GitHub 仓库页 → Actions → daily → Run workflow。",
         "", "## 抓取规矩", "",
         "如实标明身份（`figure-news/0.1`），遵守各站 robots.txt，"
         "同一网站两次请求至少隔 3 秒（HPOI 按它的要求隔 5 秒；Sofmap 隔 15 秒，而且每次最多读 3 个商品页，"
@@ -1200,7 +1224,7 @@ def main() -> int:
             # first week: it fills in rows saved before the month was parsed, and late additions.
             return "再贩" in row["status"] and not row["release"] and 0 <= age_days(row, today) <= 7
         # Popularity grows after an announcement, so HPOI items are read again a few days on.
-        return row["source"] == "HPOI" and row["status"] != BACKFILL and age_days(row, today) in STATS_AGES
+        return row["source"] == "HPOI" and row["status"] != BACKFILL and stats_due(row, today)
 
     log("== refresh")
     log(f"   {refresh_rows(fetcher, rows, pick, today)} items re-read")

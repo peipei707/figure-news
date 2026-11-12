@@ -2,7 +2,13 @@ name: daily
 
 on:
   schedule:
-    - cron: "37 23 * * *"  # 07:37 Beijing time
+    # GitHub starts scheduled runs late when it is busy: the single 23:37 UTC run this workflow
+    # used to ask for began three to five hours late. So the run is asked for three times in the
+    # small hours, Beijing time. The first to start does the work, and the later ones see that
+    # today is done and stop (the "due" job below).
+    - cron: "23 18 * * *"  # 02:23 Beijing time
+    - cron: "17 20 * * *"  # 04:17
+    - cron: "7 22 * * *"   # 06:07
   workflow_dispatch:
   push:
     branches: [main]
@@ -13,18 +19,56 @@ on:
       - requirements.txt
       - .github/workflows/daily.yml
 
+# One run at a time. A run that waited here starts from what the run before it pushed: each
+# checkout below asks for the branch as it is now, not for the commit that queued the run.
 concurrency:
   group: daily
   cancel-in-progress: false
 
 jobs:
+  due:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      run: ${{ steps.check.outputs.run }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref }}
+          sparse-checkout: data/last_run.json
+          sparse-checkout-cone-mode: false
+
+      # A push or a manual run always goes ahead. A scheduled one stops when today (Beijing time)
+      # already has a run on record, unless a source failed with an error in that run: then this
+      # one tries again. A source that refused us ("blocked") is not asked again the same day.
+      - id: check
+        run: |
+          run=true
+          if [ "$GITHUB_EVENT_NAME" = schedule ]; then
+            today=$(TZ=Asia/Shanghai date +%F)
+            if jq -e --arg today "$today" '
+                (.time // "" | startswith($today))
+                and ([.sources[]?.status] | length > 0 and all(. != "error"))
+              ' data/last_run.json > /dev/null; then
+              run=false
+              echo "今天（北京时间 $today）已经抓取过，这一次跳过。" >> "$GITHUB_STEP_SUMMARY"
+            fi
+          fi
+          echo "run=$run" >> "$GITHUB_OUTPUT"
+
   scrape:
+    needs: due
+    if: needs.due.outputs.run == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.ref }}
 
       - uses: actions/setup-python@v6
         with:
@@ -38,6 +82,7 @@ jobs:
 
       # Commit even when every source failed, so README shows what happened.
       - name: Commit results
+        id: commit
         if: ${{ !cancelled() }}
         run: |
           git config user.name "github-actions[bot]"
@@ -48,21 +93,26 @@ jobs:
             exit 0
           fi
           git commit -m "Daily update $(TZ=Asia/Shanghai date +%F)"
-          git pull --rebase
+          # Someone may have pushed while this ran. If their change cannot go under this one, stop
+          # with the files as they were committed: the next run starts from the branch and
+          # collects the same items again.
+          git pull --rebase || { git rebase --abort; exit 1; }
           git push
 
+      # Only publish what is in the repository.
       - name: Build the web page
-        if: ${{ !cancelled() }}
+        id: build
+        if: ${{ !cancelled() && steps.commit.outcome == 'success' }}
         run: python build_site.py
 
       - uses: actions/upload-pages-artifact@v4
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.build.outcome == 'success' }}
         with:
           path: build
 
   pages:
     needs: scrape
-    if: ${{ !cancelled() }}
+    if: ${{ !cancelled() && needs.scrape.result != 'skipped' }}
     runs-on: ubuntu-latest
     permissions:
       pages: write

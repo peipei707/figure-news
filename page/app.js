@@ -80,6 +80,7 @@
   const bj = new Date(Date.now() + 8 * 3600e3);
   const TODAY = Date.UTC(bj.getUTCFullYear(), bj.getUTCMonth(), bj.getUTCDate());
   const THIS_MONTH = `${bj.getUTCFullYear()}-${String(bj.getUTCMonth() + 1).padStart(2, "0")}`;
+  const LATE_HOUR = 9;
   const parseDay = (s) => {
     const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(s || "");
     return m ? Date.UTC(+m[1], +m[2] - 1, +m[3]) : NaN;
@@ -236,8 +237,10 @@
     const i = TYPE_ORDER.indexOf(it.type);
     return i < 0 ? 99 : i;
   };
-  // Clearly popular entries first, then what can be ordered now, then the bigger releases.
+  // Clearly popular entries first, then those with a picture, then what can be ordered now,
+  // then the bigger releases.
   const byScore = (a, b) => (b.heat >= 10 ? b.heat : 0) - (a.heat >= 10 ? a.heat : 0)
+    || Number(!!b.img) - Number(!!a.img)
     || Number(b.flagSet.has("pre")) - Number(a.flagSet.has("pre"))
     || (b.yuan == null ? -1 : b.yuan) - (a.yuan == null ? -1 : a.yuan)
     || a.idx - b.idx;
@@ -327,7 +330,8 @@
       box.append(img);
     } else {
       box.classList.add("none");
-      box.append(el("span", null, small ? "无图" : "暂无图片"));
+      // Solaris Japan keeps its NSFW pictures behind a click, so none is saved for those.
+      box.append(el("span", null, small ? "无图" : it.adult ? "图片见原站" : "暂无图片"));
     }
     return box;
   }
@@ -758,7 +762,7 @@
       row.append(text, input);
       show.append(row);
     };
-    sw("adult", "成人向条目", "HPOI 标为「观感成熟」的条目");
+    sw("adult", "成人向条目", "HPOI 标为「观感成熟」、Solaris Japan 标为 NSFW 的条目");
     sw("old", "旧品补录", "HPOI 新建、但早已发售的老商品");
     body.append(show);
 
@@ -1091,11 +1095,16 @@
       tr.append(el("td", null, SOURCES[key].name), cell, el("td", "n", String(run.new == null ? 0 : run.new)), el("td", "note", run.note || ""));
       tbody.append(tr);
     }
-    const m = /^\d{4}-(\d{2})-(\d{2}) (\d{2}:\d{2})/.exec(DATA.updated || "");
+    const m = /^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2})/.exec(DATA.updated || "");
     if (m) {
-      const dot = el("span", bad ? "dot bad" : "dot");
-      $("fresh").append(dot, `${+m[1]}/${+m[2]} ${m[3]} 更新`);
-      $("fresh").title = bad ? `有 ${bad} 个来源这次没抓到，详见页面底部` : "三个来源都抓取正常（北京时间）";
+      // The scraper runs in the small hours, Beijing time, so by LATE_HOUR today's data is overdue.
+      const gap = daysTo(m[1]);
+      const late = gap < -1 || (gap === -1 && bj.getUTCHours() >= LATE_HOUR);
+      const when = gap === 0 ? "今天" : gap === -1 ? "昨天" : md(m[1]);
+      $("fresh").append(el("span", bad ? "dot bad" : late ? "dot late" : "dot"), `${when} ${m[2]} 更新`);
+      if (late) $("fresh").append(el("small", null, gap < -1 ? `已经 ${-gap} 天没更新` : "今天的还没到"));
+      $("fresh").title = bad ? `有 ${bad} 个来源这次没抓到，详见页面底部`
+        : late ? "每天清晨抓取一次（北京时间）；GitHub 的定时任务有时会晚几个小时" : "各个来源都抓取正常（北京时间）";
     }
     $("rate-note").textContent = `页面上的 ¥ 一律指人民币，日元、美元价格写作「日元」「美元」。约合价按 1 日元 ≈ ${RATE} 元估算`
       + `（取自 HPOI 近期标注的中位数），HPOI 自己标了人民币参考价的直接用它的；美元按 1 美元 ≈ ${Number(DATA.usd) || 7.1} 元粗算。`;
@@ -1171,6 +1180,33 @@
       $("bar").classList.toggle("stuck", !entry.isIntersecting && entry.boundingClientRect.top < 60);
     }, { rootMargin: "-1px 0px 0px 0px" }).observe($("bar-top"));
   }
+
+  // ---- a page left open: pick up the next build when it is out
+  // Coming back to the page reloads it if there is a newer build and nothing is in progress.
+  // Otherwise, and for a page that stayed in view all along, a button offers the reload.
+  let checkedAt = Date.now();
+  async function checkNewer(cameBack) {
+    if (document.visibilityState !== "visible" || Date.now() - checkedAt < 5 * 60e3) return;
+    checkedAt = Date.now();
+    let latest = "";
+    try {
+      const res = await fetch("version.json", { cache: "no-store" });
+      if (res.ok) latest = String((await res.json()).updated || "");
+    } catch (e) { return; } // offline, or opened as a local file
+    if (!latest || latest <= (DATA.updated || "")) return;
+    let reload = cameBack && !$("sheet").open && !$("filters").open && !$("q").value;
+    try {
+      // Once per build, in case the newer page has not reached this visitor yet.
+      if (sessionStorage.getItem("fn-reloaded") === latest) reload = false;
+      else if (reload) sessionStorage.setItem("fn-reloaded", latest);
+    } catch (e) { reload = false; }
+    if (reload) location.reload();
+    else $("newer").hidden = false;
+  }
+  document.addEventListener("visibilitychange", () => checkNewer(true));
+  window.addEventListener("pageshow", (e) => { if (e.persisted) checkNewer(true); });
+  setInterval(() => checkNewer(false), 30 * 60e3);
+  $("newer").addEventListener("click", () => location.reload());
 
   if (window.matchMedia("(max-width: 599px)").matches) $("q").placeholder = "搜名称、作品";
   renderMeta();
