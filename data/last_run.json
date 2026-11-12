@@ -1,24 +1,24 @@
 {
-  "time": "2026-11-12 12:08",
+  "time": "2026-11-12 14:48",
   "sources": {
     "HPOI": {
       "status": "ok",
-      "new": 2,
+      "new": 3,
       "note": ""
     },
     "GoodSmile": {
       "status": "ok",
-      "new": 19,
+      "new": 0,
       "note": ""
     },
     "HLJ": {
       "status": "ok",
-      "new": 9,
+      "new": 0,
       "note": ""
     },
     "Sofmap": {
       "status": "ok",
-      "new": 20,
+      "new": 0,
       "note": ""
     },
     "Solaris": {
