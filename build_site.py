@@ -4,6 +4,7 @@
 Writes build/, which the daily workflow uploads to GitHub Pages:
 
     index.html              page/template.html with app.css, app.js and the data inline
+    version.json            when the data was collected, for a page that was left open
     thumbs/<source>/<file>  the thumbnails the page shows, copied from thumbs/
     (page/static/*)         icons and the web app manifest, copied as they are
 
@@ -13,7 +14,7 @@ so rows are tidied up on the way:
   * the same product listed by two sources (same JAN barcode, or the same
     Japanese name from the same maker) becomes one product with several offers;
   * type, scale, maker and series are put into one Chinese vocabulary, using
-    page/aliases.json for the names the three sources spell differently;
+    page/aliases.json for the names the sources spell differently;
   * prices get a renminbi figure, release dates a sortable month, and HPOI's
     progress notes a stage ("企划公布", "11/12 开订", "预订中").
 
@@ -29,6 +30,7 @@ import json
 import re
 import shutil
 import unicodedata
+from collections import Counter
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -573,11 +575,16 @@ def build_data(rows: list[dict[str, str]], today: date, last_run: dict) -> dict:
     recent = set(days)
     items = [p for p in products if p["day"] in recent or p.get("pe", "") >= today.isoformat()]
     items.sort(key=lambda p: (p["day"], p["k"]), reverse=True)
+    # The run record counts what that one run added. The page shows the day's total instead, so a
+    # second run on the same day does not make a source look as if it had nothing new.
+    run_day = last_run.get("time", "")[:10]
+    added = Counter(r["source"] for r in rows if r["first_seen"] == run_day)
+    runs = {key: run | {"new": added[key]} for key, run in last_run.get("sources", {}).items()}
     return {
         "rate": rate,
         "usd": USD_TO_CNY,
         "updated": last_run.get("time", ""),
-        "runs": last_run.get("sources", {}),
+        "runs": runs,
         "types": TYPES,
         "days": [{"day": d, "count": sum(1 for p in items if p["day"] == d)} for d in days],
         "items": items,
@@ -621,6 +628,8 @@ def main() -> None:
     for mark, text in parts.items():
         page = page.replace(mark, text)
     (OUT / "index.html").write_text(page, encoding="utf-8")
+    # A page that was left open asks for this to find out whether a newer build is out.
+    (OUT / "version.json").write_text(json.dumps({"updated": data["updated"]}) + "\n", encoding="utf-8")
 
     merged = sum(1 for item in data["items"] if len(item["keys"]) > 1)
     print(f"build/index.html  {(OUT / 'index.html').stat().st_size / 1024:.0f} KB, "

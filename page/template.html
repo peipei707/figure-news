@@ -109,7 +109,7 @@ __APP_CSS__
       <h2>数据来源</h2>
       <div class="tbl">
         <table id="runs">
-          <thead><tr><th>来源</th><th>上次抓取</th><th>新增</th><th>备注</th></tr></thead>
+          <thead><tr><th>来源</th><th>上次抓取</th><th>当天新增</th><th>备注</th></tr></thead>
           <tbody></tbody>
         </table>
       </div>
@@ -121,7 +121,7 @@ __APP_CSS__
     <section>
       <h2>怎么看</h2>
       <ul>
-        <li>每天早上（北京时间）抓取一次，这里显示最近 30 天；还在预订期内的更早商品也会留在「预订」里。</li>
+        <li>每天清晨（北京时间）抓取一次，右上角是实际抓取的时间；GitHub 的定时任务偶尔会晚几个小时。这里显示最近 30 天，还在预订期内的更早商品也会留在「预订」里。</li>
         <li>同一件商品在几个来源都有时合成一张卡片，点开能看到每个来源的价格和链接。</li>
         <li id="rate-note">页面上的 ¥ 一律指人民币，日元价格写作「日元」。</li>
         <li>作品名和厂商统一成中文常用叫法；商品名保留来源原文（HPOI 中文，Good Smile、Sofmap 日文，HLJ、Solaris Japan 英文）。</li>
@@ -142,6 +142,7 @@ __APP_CSS__
 
 <dialog class="sheet" id="sheet" aria-labelledby="sheet-title"></dialog>
 <dialog class="panel" id="filters" aria-labelledby="filters-title"></dialog>
+<button type="button" class="newer" id="newer" hidden>有新一期，点这里刷新</button>
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
 <script id="figure-data" type="application/json">__FIGURE_DATA__</script>
