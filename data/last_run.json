@@ -1,19 +1,19 @@
 {
-  "time": "2026-11-20 08:43",
+  "time": "2026-11-20 09:46",
   "sources": {
     "HPOI": {
       "status": "ok",
-      "new": 21,
+      "new": 4,
       "note": ""
     },
     "GoodSmile": {
-      "status": "error",
-      "new": 0,
-      "note": "HTTPError: 503 Server Error: OK for url: https://www.goodsmile.com/ja"
+      "status": "ok",
+      "new": 7,
+      "note": ""
     },
     "HLJ": {
       "status": "ok",
-      "new": 12,
+      "new": 0,
       "note": ""
     },
     "Sofmap": {
@@ -23,7 +23,7 @@
     },
     "Solaris": {
       "status": "ok",
-      "new": 9,
+      "new": 0,
       "note": ""
     }
   }
