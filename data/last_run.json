@@ -1,29 +1,29 @@
 {
-  "time": "2026-11-21 08:03",
+  "time": "2026-11-22 07:29",
   "sources": {
     "HPOI": {
       "status": "ok",
-      "new": 30,
+      "new": 5,
       "note": ""
     },
     "GoodSmile": {
       "status": "ok",
-      "new": 24,
+      "new": 0,
       "note": ""
     },
     "HLJ": {
       "status": "ok",
-      "new": 16,
+      "new": 0,
       "note": ""
     },
     "Sofmap": {
       "status": "ok",
-      "new": 2,
-      "note": ""
+      "new": 40,
+      "note": "还有 40 件留到下次"
     },
     "Solaris": {
       "status": "ok",
-      "new": 36,
+      "new": 0,
       "note": ""
     }
   }
