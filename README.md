@@ -2,7 +2,7 @@
 
 每天清晨（北京时间）自动抓一次 HPOI、Good Smile 官网、HLJ、Sofmap、Solaris Japan 的新品，按天汇总成表。
 
-**最新一期：[2026-11-22](daily/2026-11-22.md)（45 件）**
+**最新一期：[2026-11-23](daily/2026-11-23.md)（40 件）**
 
 **公开网页：[https://peipei707.github.io/figure-news/](https://peipei707.github.io/figure-news/)**（GitHub Pages，每天抓取后自动更新，最近 30 天）
 
@@ -10,18 +10,19 @@
 
 ## 上次运行
 
-2026-11-22 07:29（北京时间）
+2026-11-23 07:40（北京时间）
 
 | 来源 | 结果 | 新增 | 备注 |
 |---|---|---|---|
-| HPOI | ✅ 正常 | 5 |  |
+| HPOI | ⚠️ 出错 | 0 | ReadTimeout: HTTPSConnectionPool(host='www.hpoi.net', port=443): Read timed out. (read timeout=30) |
 | Good Smile 官网 | ✅ 正常 | 0 |  |
 | HLJ | ✅ 正常 | 0 |  |
-| Sofmap | ✅ 正常 | 40 | 还有 40 件留到下次 |
+| Sofmap | ✅ 正常 | 40 |  |
 | Solaris Japan | ✅ 正常 | 0 |  |
 
 ## 最近 30 天
 
+- [2026-11-23](daily/2026-11-23.md) · 40 件
 - [2026-11-22](daily/2026-11-22.md) · 45 件
 - [2026-11-21](daily/2026-11-21.md) · 108 件
 - [2026-11-20](daily/2026-11-20.md) · 53 件
