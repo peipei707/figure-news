@@ -206,17 +206,18 @@ class Fetcher:
         host = urlparse(url).netloc
         if host in self.refused:  # it already said no: do not knock again in this run
             raise Blocked(self.refused[host])
-        for attempt in (1, 2):
+        for attempt in (1, 2, 3):
             self._throttle(host)
             try:
                 resp = self.session.get(url, timeout=TIMEOUT, **kwargs)
             except requests.RequestException:
-                if attempt == 2:
+                if attempt == 3:
                     raise
                 time.sleep(2)
                 continue
-            if resp.status_code >= 500 and attempt == 1 and not looks_like_challenge(resp):
+            if resp.status_code >= 500 and attempt < 3 and not looks_like_challenge(resp):
                 resp.close()
+                time.sleep(2)
                 continue
             return resp
         raise AssertionError("unreachable")
@@ -844,6 +845,15 @@ def solaris_list(text: str) -> list[Item]:
     return items
 
 
+def solaris_cdn_url(url: str) -> str:
+    """Convert solarisjapan.com/cdn/shop/files/<id>_750x.jpg to direct cdn.shopify.com full-res URL."""
+    m = re.match(r"https?://solarisjapan\.com/cdn/shop/files/([^?#]+)(.*)", url or "")
+    if not m:
+        return ""
+    fname = re.sub(r"_\d+x(?=\.[A-Za-z0-9]+$)", "", m.group(1))
+    return f"https://cdn.shopify.com/s/files/1/0318/2649/files/{fname}{m.group(2)}"
+
+
 def solaris_detail(html: str, it: Item) -> None:
     soup = BeautifulSoup(html, "html.parser")
     prod = ld_product(soup)
@@ -852,10 +862,13 @@ def solaris_detail(html: str, it: Item) -> None:
         code = code[1:] if re.fullmatch(r"0\d{13}", code) else code
         it.jan = code if re.fullmatch(r"\d{8,14}", code) else ""
         image = first(prod.get("image"))
-        it.image_url = norm_img_url(image) if isinstance(image, str) else ""
+        if isinstance(image, str):
+            normed = norm_img_url(image)
+            it.image_url = solaris_cdn_url(normed) or normed
         it.maker = it.maker or name_of(prod.get("brand"))
     if not it.image_url:
-        it.image_url = og_image(soup, it.url) or norm_img_url(it.thumb_src)
+        og = og_image(soup, it.url)
+        it.image_url = norm_img_url(it.thumb_src) or solaris_cdn_url(og) or og
     text = clean(soup.get_text(" "))
     release = re.search(r"Release Date\s+((?:\d{1,2}\.?\s+)?[A-Za-z]{3,9}\.?\s+20\d{2}|20\d{2}[-/.]\d{1,2})", text)
     it.release = month_of(release.group(1)) if release else ""
@@ -1190,7 +1203,7 @@ def kdcolle_detail(html: str, it: Item) -> None:
 # Hobby-Genki (hobby-genki.com): Japanese export shop on PrestaShop.
 
 GENKI_BASE = "https://hobby-genki.com/"
-GENKI_LIST = "https://hobby-genki.com/en/12-figures?order=product.date_add.desc"
+GENKI_LIST = "https://hobby-genki.com/en/12-figures"
 
 
 def hobbygenki_list(html: str) -> list[Item]:
@@ -1384,7 +1397,7 @@ def ninningame_detail(html: str, it: Item) -> None:
 # Figuya (figuya.com): European specialist anime figure shop.
 
 FIGUYA_BASE = "https://figuya.com/"
-FIGUYA_LIST = "https://figuya.com/en/figures?sort=newest"
+FIGUYA_LIST = "https://figuya.com/en/figures"
 
 
 def figuya_list(html: str) -> list[Item]:
@@ -1554,8 +1567,16 @@ def save_thumb(fetcher: Fetcher, it: Item) -> None:
     if not dest.exists():
         parts = urlparse(it.url)
         referer = f"{parts.scheme}://{parts.netloc}/" if parts.scheme and parts.netloc else None
-        urls = [norm_img_url(u) for u in (it.image_url, it.thumb_src) if u]
-        for url in dict.fromkeys(u for u in urls if u):
+        urls = []
+        for raw in (it.image_url, it.thumb_src):
+            u = norm_img_url(raw)
+            if not u:
+                continue
+            cdn = solaris_cdn_url(u)
+            if cdn:
+                urls.append(cdn)
+            urls.append(u)
+        for url in dict.fromkeys(urls):
             try:
                 img = Image.open(io.BytesIO(fetcher.image(url, referer=referer)))
                 if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
