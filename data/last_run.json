@@ -1,5 +1,5 @@
 {
-  "time": "2026-11-27 19:47",
+  "time": "2026-11-27 20:17",
   "sources": {
     "HPOI": {
       "status": "ok",
@@ -43,12 +43,12 @@
     },
     "HobbyGenki": {
       "status": "ok",
-      "new": 18,
+      "new": 0,
       "note": ""
     },
     "NinNinGame": {
       "status": "ok",
-      "new": 6,
+      "new": 4,
       "note": ""
     },
     "Solaris": {
@@ -58,7 +58,7 @@
     },
     "Figuya": {
       "status": "ok",
-      "new": 9,
+      "new": 0,
       "note": ""
     }
   }
