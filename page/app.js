@@ -18,9 +18,12 @@
     Solaris: { name: "Solaris Japan", short: "Solaris" },
     Figuya: { name: "Figuya", short: "Figuya" },
   };
-  const FLAGS = { pre: "可预订", re: "再贩", ltd: "官网限定", bonus: "附特典", mto: "受注生产", fav: "已收藏" };
-  const QUICK_FLAGS = ["pre", "re", "ltd", "bonus"];
-  const TAGS = { adult: "成人向", re: "再贩", ltd: "限定", bonus: "特典", mto: "受注", old: "旧品" };
+  const FLAGS = {
+    pre: "可预订", re: "再贩", ltd: "限定流通", bonus: "附特典", mto: "受注生产",
+    multi: "多站同步", scarce: "满订 / 紧俏", gen: "一般流通", fav: "已收藏",
+  };
+  const QUICK_FLAGS = ["pre", "re", "ltd", "bonus", "scarce"];
+  const TAGS = { sold: "满订", low: "紧俏", adult: "成人向", re: "再贩", ltd: "限定", bonus: "特典", mto: "受注", old: "旧品" };
   const UNIT = { JPY: "日元", USD: "美元", EUR: "欧元", CNY: "元" };
   // Bands are in renminbi, the one figure every priced item has.
   const BANDS = [
@@ -28,7 +31,7 @@
     ["d", "¥1000–2000", 1000, 2000], ["e", "¥2000 以上", 2000, Infinity], ["none", "价格未定"],
   ];
   const SORTS = [
-    ["auto", "默认排序"], ["hot", "人气最高"], ["price-desc", "价格从高到低"], ["price-asc", "价格从低到高"],
+    ["auto", "默认排序"], ["buzz", "全网热度"], ["hot", "HPOI 人气"], ["price-desc", "价格从高到低"], ["price-asc", "价格从低到高"],
     ["release", "发售最早"], ["due", "截订最近"],
   ];
   const STEP = 60;
@@ -137,6 +140,9 @@
     it.opens = opens != null && opens >= 0 && !raw.pe ? opens : null;
     const hot = raw.hot || {};
     it.heat = (hot.w || 0) * 2 + (hot.f || 0) + (hot.p || 0) * 3 + (hot.o || 0) * 2;
+    it.biz = raw.biz || {};
+    it.buzz = it.biz.buzz != null ? it.biz.buzz : it.heat;
+    if (it.biz.sold || it.biz.low) flags.add("scarce");
     it.yuan = raw.cur === "CNY" ? raw.price : raw.cny == null ? null : raw.cny;
     it.srcs = it.offers.map((o) => o.s);
     it.hay = [raw.name, raw.alts, raw.ip, raw.series, raw.chr, raw.maker, raw.makers, raw.line, TYPES[raw.type],
@@ -253,6 +259,7 @@
     || a.idx - b.idx;
   const far = (v) => (v == null ? Infinity : v);
   const CMP = {
+    buzz: (a, b) => b.buzz - a.buzz || byScore(a, b),
     hot: (a, b) => b.heat - a.heat || byScore(a, b),
     "price-desc": (a, b) => (b.yuan == null ? -1 : b.yuan) - (a.yuan == null ? -1 : a.yuan) || byScore(a, b),
     "price-asc": (a, b) => far(a.yuan) - far(b.yuan) || byScore(a, b),
@@ -382,7 +389,11 @@
   }
   function tagRow(it) {
     const row = el("div", "tags");
-    for (const key of Object.keys(TAGS)) if (it.flagSet.has(key)) row.append(el("span", "tag", TAGS[key]));
+    for (const key of Object.keys(TAGS)) {
+      if (!it.flagSet.has(key)) continue;
+      const cls = key === "sold" ? "tag warn" : key === "low" ? "tag soon" : "tag";
+      row.append(el("span", cls, TAGS[key]));
+    }
     return row.childElementCount ? row : null;
   }
   const itemLink = (it, cls) => {
@@ -741,7 +752,7 @@
       body.append(box);
     };
     const mark = (node, key) => { node.dataset.f = key; return node; };
-    group("状态", "", ["pre", "re", "ltd", "bonus", "mto", "fav"].map((f) => {
+    group("状态与经销信号", "", ["pre", "scarce", "multi", "gen", "ltd", "re", "bonus", "mto", "fav"].map((f) => {
       const n = count(pool, null, (it) => hasFlag(it, f));
       return n || state.flags.has(f) ? mark(chip(FLAGS[f], n, state.flags.has(f), () => toggle("flags", f)), `flags:${f}`) : null;
     }).filter(Boolean));
@@ -901,7 +912,50 @@
   function sheetBody(it) {
     const grid = el("div", "sheet-grid");
     const pic = el("div", "sheet-pic");
-    pic.append(shot(it, true));
+    const mainShot = shot(it, true);
+    mainShot.classList.add("whole");
+    pic.append(mainShot);
+    const mainImg = mainShot.querySelector("img");
+    const gal = (it.gal || []).map(safeUrl).filter(Boolean);
+    const origLink = el("a", null, "查看高清原图 ↗");
+    origLink.target = "_blank";
+    origLink.rel = "noopener noreferrer";
+    const metaBar = el("div", "pic-meta");
+    const counter = el("span", null, gal.length > 1 ? `官图 1 / ${gal.length}` : "");
+    if (gal.length) {
+      origLink.href = gal[0];
+      metaBar.append(counter, origLink);
+      pic.append(metaBar);
+    }
+    if (gal.length > 1 && mainImg) {
+      const strip = el("div", "gal");
+      strip.setAttribute("role", "group");
+      strip.setAttribute("aria-label", "多角度官图");
+      const btns = [];
+      const setActive = (idx, src) => {
+        mainImg.src = idx === 0 && it.img ? it.img : src;
+        origLink.href = src;
+        counter.textContent = `官图 ${idx + 1} / ${gal.length}`;
+        btns.forEach((b, j) => b.setAttribute("aria-pressed", String(j === idx)));
+      };
+      gal.forEach((url, idx) => {
+        const b = el("button", "gal-btn");
+        b.type = "button";
+        b.setAttribute("aria-pressed", String(idx === 0));
+        b.setAttribute("aria-label", `第 ${idx + 1} 张图`);
+        const th = el("img");
+        th.alt = "";
+        th.loading = "lazy";
+        th.decoding = "async";
+        th.src = idx === 0 && it.img ? it.img : url;
+        th.addEventListener("error", () => { b.remove(); }, { once: true });
+        b.addEventListener("click", () => setActive(idx, url));
+        b.append(th);
+        btns.push(b);
+        strip.append(b);
+      });
+      pic.append(strip);
+    }
 
     const main = el("div", "sheet-main");
     const head = el("div", "sheet-head");
@@ -918,10 +972,49 @@
       if (text) pills.append(el("span", "pill", text));
     }
     for (const key of ["re", "ltd", "bonus", "mto"]) if (it.flagSet.has(key)) pills.append(el("span", "pill", FLAGS[key]));
+    if (it.flagSet.has("sold")) pills.append(el("span", "pill due", "有站点满订"));
+    else if (it.flagSet.has("low")) pills.append(el("span", "pill soon", "余量紧俏"));
     if (it.flagSet.has("old")) pills.append(el("span", "pill", "旧品补录"));
     if (it.adult) pills.append(el("span", "pill", it.rating ? `成人向（${it.rating}）` : "成人向"));
     head.append(pills);
     main.append(head);
+
+    // Compact dealer & distributor key-node panel (4 crisp cards)
+    const biz = it.biz || {};
+    const bizCells = [];
+    const addBiz = (label, value, sub, cls) => {
+      const c = el("div", "biz-cell");
+      c.append(el("small", null, label), el("b", cls || "", value));
+      if (sub) c.append(el("span", null, sub));
+      bizCells.push(c);
+    };
+    const chVal = biz.ch || (it.flagSet.has("ltd") ? "限定流通" : "一般流通");
+    const chSub = [biz.lim, biz.nb ? "不可同捆" : ""].filter(Boolean).join(" · ") || (chVal === "一般流通" ? "多渠道可订" : "注意拿货渠道");
+    addBiz("流通与限购", chVal, chSub, chVal === "一般流通" ? "ok" : "soon");
+
+    const cov = biz.cov || it.offers.length;
+    const mktVal = biz.sold ? `${biz.sold} 站满订` : biz.low ? "余量紧俏" : `${cov} 站同步上架`;
+    const mktCls = biz.sold ? "due" : biz.low ? "soon" : cov >= 3 ? "ok" : "";
+    const mktSub = [biz.sold || biz.low ? `全网 ${cov} 站收录` : "", biz.sp, popText(it)].filter(Boolean).join(" · ") || "持续跟踪中";
+    addBiz("市场热度与价差", mktVal, mktSub, mktCls);
+
+    const cancelOffer = it.offers.find((o) => o.cancel);
+    const ordVal = it.pe && daysTo(it.pe) != null ? leftText(daysTo(it.pe))
+      : it.open && daysTo(it.open) != null ? `${md(it.open)} 开订`
+      : it.flagSet.has("pre") ? "预订开放中" : "暂未公布截订";
+    const ordCls = it.left != null && it.left <= 3 ? "due" : it.left != null && it.left <= 7 ? "soon" : it.flagSet.has("pre") ? "ok" : "";
+    const ordSub = [it.pe && `${md(it.pe)} 截订`, cancelOffer && `可取消至 ${md(cancelOffer.cancel)}`, it.ps && `${md(it.ps)} 开订`]
+      .filter(Boolean).join(" · ") || "以各代理/官店截单为准";
+    addBiz("订货关键节点", ordVal, ordSub, ordCls);
+
+    const lead = biz.lead;
+    const leadVal = lead == null ? "发售未定" : lead < 0 ? "已发售" : lead === 0 ? "本月出货" : `约 ${lead} 个月后`;
+    const leadSub = [releaseLabel(it) && `${releaseLabel(it)} 发售`, biz.wt && `重 ${biz.wt}`].filter(Boolean).join(" · ") || "待定";
+    addBiz("出货周期与运储", leadVal, leadSub, "");
+
+    const bizGrid = el("div", "biz-grid");
+    bizGrid.append(...bizCells);
+    main.append(block("经销关键节点", bizGrid));
 
     const offers = el("div", "offers");
     for (const o of it.offers) {
@@ -929,7 +1022,7 @@
       const src = SOURCES[o.s] || { name: o.s };
       box.append(el("p", "who", [src.name, ...(o.st || [])].join(" · ")), priceLine(o));
       const window_ = o.ps && o.pe ? `预订 ${md(o.ps)} – ${md(o.pe)}` : o.pe ? `截订 ${md(o.pe)}` : "";
-      const notes = [o.note, window_ && `${window_}（${leftText(daysTo(o.pe))}）`, o.cancel && `可取消到 ${md(o.cancel)}`].filter(Boolean);
+      const notes = [o.note, o.sn, window_ && `${window_}（${leftText(daysTo(o.pe))}）`, o.cancel && `可取消到 ${md(o.cancel)}`].filter(Boolean);
       if (notes.length) box.append(el("p", "note", notes.join(" · ")));
       const url = safeUrl(o.url);
       if (url) {
@@ -965,11 +1058,14 @@
       ["类型", [...new Set([TYPES[it.type], ...(it.line || [])].filter(Boolean))].join(" · ")],
       ["比例", it.scale],
       ["尺寸", it.size],
+      ["重量", biz.wt],
       ["材质", it.material],
+      ["配件", it.acc],
       ["原型", it.sculptor],
       ["涂装", it.painter],
       ["原画", it.artist],
       ["特典", it.bonus],
+      ["限购", biz.lim],
       ["官方规格", it.spec],
       ["观感", it.rating],
       ["JAN", it.jan],

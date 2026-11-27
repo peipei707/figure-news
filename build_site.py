@@ -401,8 +401,8 @@ def first_of(members: list[dict[str, str]], field: str) -> str:
     return next((m[field] for m in members if m[field]), "")
 
 
-def product_of(members: list[dict[str, str]], aliases: Aliases, rate: float) -> dict:
-    members = sorted(members, key=lambda r: SOURCES.index(r["source"]) if r["source"] in SOURCES else 9)
+def product_of(members: list[dict[str, str]], aliases: Aliases, rate: float, today: date) -> dict:
+    members = sorted(members, key=lambda r: SOURCES.index(r["source"]) if r["source"] in SOURCES else 99)
     by_source = {m["source"]: m for m in reversed(members)}
     adult = any(m["adult"] for m in members)
 
@@ -454,13 +454,15 @@ def product_of(members: list[dict[str, str]], aliases: Aliases, rate: float) -> 
             offer["cancel"] = cancel.group(1)
         if status:
             offer["st"] = [s for s in status if s != BACKFILL]
+        if m.get("stock_note"):
+            offer["sn"] = m["stock_note"]
         offers.append(offer)
 
         if "预订中" in status:
             flags.add("pre")
         if any("再贩" in s for s in status) or re.search(r"\((?:re-?release|re-?issue|re-?run)\)", m["name"], re.I):
             flags.add("re")
-        if any("限定" in s for s in status):
+        if any("限定" in s for s in status) or any(w in m.get("channel", "") for w in ("限定", "魂限")):
             flags.add("ltd")
         if any("特典" in s for s in status) or m["bonus"]:
             flags.add("bonus")
@@ -520,9 +522,11 @@ def product_of(members: list[dict[str, str]], aliases: Aliases, rate: float) -> 
     for m in members:
         for part in m["extra"].split("；"):
             label, _, value = part.partition("：")
-            if value and label in ("发行", "原画", "仕様", "发售记录"):
-                item.setdefault({"发行": "publisher", "原画": "artist", "仕様": "spec", "发售记录": "history"}[label], value)
+            if value and label in ("发行", "原画", "仕様", "发售记录", "配件", "付属品"):
+                key_map = {"发行": "publisher", "原画": "artist", "仕様": "spec", "发售记录": "history", "配件": "acc", "付属品": "acc"}
+                item.setdefault(key_map[label], value)
 
+    hpoi_heat = 0
     hpoi = by_source.get("HPOI")
     if hpoi and hpoi["stats_date"]:
         hot = {"at": hpoi["stats_date"]}
@@ -534,15 +538,95 @@ def product_of(members: list[dict[str, str]], aliases: Aliases, rate: float) -> 
                 hot["s"] = round(float(hpoi["score"]), 2)
         except ValueError:
             pass
+        hpoi_heat = (hot.get("w", 0) * 2) + hot.get("f", 0) + (hot.get("p", 0) * 3) + (hot.get("o", 0) * 2)
         put("views", hpoi["views"])
         item["hot"] = hot
         put("prog", [e for e in hpoi["progress"].split(" | ") if e])
+
+    # Dealer & distributor key signals (cross-site demand, channel, lead time, price spread)
+    cov = len(offers)
+    sold = sum(1 for m in members if "预订已满" in m["status"] or "预订已满" in m.get("stock_note", ""))
+    low = any(any(w in m.get("stock_note", "") for w in ("紧俏", "仅剩", "早鸟已满")) for m in members)
+    raw_channels = [m.get("channel", "") for m in members if m.get("channel")]
+    ch = next((c for c in raw_channels if any(w in c for w in ("魂限", "官网限定", "流通限定", "受注限定"))), "")
+    if not ch:
+        if "ltd" in flags or any(m["source"] == "Native" for m in members):
+            ch = "官网限定"
+        elif "mto" in flags:
+            ch = "受注限定"
+        elif raw_channels or cov >= 2 or any(m["source"] in ("HLJ", "Sofmap", "HobbyGenki", "Figuya", "Solaris", "NinNinGame") for m in members):
+            ch = "一般流通"
+    lim = next((m.get("buy_limit", "") for m in members if m.get("buy_limit")), "")
+    wt = next((m.get("weight", "") for m in members if m.get("weight")), "")
+    no_bundle = any("不可同捆" in m["status"] for m in members)
+    disc_note = next((m.get("stock_note", "") for m in members if "店价 -" in m.get("stock_note", "")), "")
+    spread = ""
+    if disc_note:
+        m_d = re.search(r"店价\s*-\d+%", disc_note)
+        spread = m_d.group(0) if m_d else ""
+    if not spread:
+        msrp_srcs = {"GoodSmile", "Native", "MegaHobby", "KDcolle", "TokyoFigure", "HPOI", "Sofmap"}
+        exp_srcs = {"Solaris", "NinNinGame", "Figuya"}
+        msrp_vals = [o.get("cny") if o.get("cur") != "CNY" else o.get("price") for o in offers if o["s"] in msrp_srcs and (o.get("cny") or o.get("cur") == "CNY")]
+        exp_vals = [o.get("cny") for o in offers if o["s"] in exp_srcs and o.get("cny")]
+        if msrp_vals and exp_vals:
+            ref_p, exp_p = min(msrp_vals), min(exp_vals)
+            if ref_p and ref_p > 0:
+                pct = round((exp_p - ref_p) / ref_p * 100)
+                if pct >= 15:
+                    spread = f"海外溢价 +{pct}%"
+                elif pct <= -8:
+                    spread = f"渠道折约 {pct}%"
+    lead = None
+    m_rel = re.fullmatch(r"(\d{4})-(\d{2})", release[0])
+    if m_rel:
+        lead = (int(m_rel.group(1)) - today.year) * 12 + (int(m_rel.group(2)) - today.month)
+    buzz = hpoi_heat + (cov - 1) * 18 + sold * 45 + (25 if low else 0) + (15 if "re" in flags else 0)
+    if sold:
+        flags.add("sold")
+    if low:
+        flags.add("low")
+    if cov >= 2:
+        flags.add("multi")
+    if ch == "一般流通":
+        flags.add("gen")
+    put("flags", sorted(flags))
+    biz: dict = {"cov": cov, "buzz": buzz}
+    if ch:
+        biz["ch"] = ch
+    if sold:
+        biz["sold"] = sold
+    if low:
+        biz["low"] = 1
+    if lim:
+        biz["lim"] = lim
+    if wt:
+        biz["wt"] = wt
+    if no_bundle:
+        biz["nb"] = 1
+    if spread:
+        biz["sp"] = spread
+    if lead is not None:
+        biz["lead"] = lead
+    item["biz"] = biz
 
     for src in IMAGE_FROM:
         thumb = by_source.get(src, {}).get("thumb")
         if thumb and (ROOT / thumb).is_file():
             item["img"] = thumb
             break
+    gal_urls = []
+    for src in IMAGE_FROM:
+        m = by_source.get(src)
+        if not m:
+            continue
+        if m.get("gallery"):
+            gal_urls.extend(u for u in m["gallery"].split("|") if u.startswith("https://"))
+        elif m.get("image_url", "").startswith("https://"):
+            gal_urls.append(m["image_url"])
+    gal_urls = uniq(gal_urls)[:6]
+    if gal_urls:
+        item["gal"] = gal_urls
     return item
 
 
@@ -569,14 +653,12 @@ def frame_of(path: Path) -> dict:
         with Image.open(path) as im:
             w, h = im.size
             shape = (w / h) / TILE  # 1 = the tile's shape, above 1 = wider
-            if 0.88 <= shape <= 1.15:
+            if 0.90 <= shape <= 1.12:
                 return {}
             rgb = im.convert("RGB")
             corners = [rgb.getpixel(xy) for xy in ((1, 1), (w - 2, 1), (1, h - 2), (w - 2, h - 2))]
             if max(max(c[i] for c in corners) - min(c[i] for c in corners) for i in range(3)) <= 24:
                 return {"fit": 1, "bg": "#%02x%02x%02x" % tuple(round(sum(c[i] for c in corners) / 4) for i in range(3))}
-            if 0.75 <= shape <= 1.4:
-                return {}
             edge = max(2, round(min(w, h) * 0.04))
             if shape > 1:  # bands above and below
                 return {"fit": 1, "bg": [tone(rgb, (0, 0, w, edge)), tone(rgb, (0, h - edge, w, h)), "v"]}
@@ -590,16 +672,22 @@ def frame_of(path: Path) -> dict:
 
 
 def load_rows() -> list[dict[str, str]]:
+    raw_keys = ("url", "image_url", "thumb", "gallery")
+    opt_keys = ("gallery", "channel", "buy_limit", "weight", "stock_note")
     with (ROOT / "data" / "items.csv").open(newline="", encoding="utf-8-sig") as f:
-        rows = [{k: squash(v) if k not in ("url", "image_url", "thumb") else (v or "") for k, v in row.items()}
-                for row in csv.DictReader(f)]
+        rows = []
+        for row in csv.DictReader(f):
+            clean_row = {k: (v or "") if k in raw_keys else squash(v) for k, v in row.items()}
+            for k in opt_keys:
+                clean_row.setdefault(k, "")
+            rows.append(clean_row)
     return [r for r in rows if r.get("first_seen") and r.get("source") and r.get("id")]
 
 
 def build_data(rows: list[dict[str, str]], today: date, last_run: dict) -> dict:
     aliases = Aliases(PAGE / "aliases.json")
     rate = jpy_to_cny(rows)
-    products = [product_of(group, aliases, rate) for group in group_rows(rows, aliases)]
+    products = [product_of(group, aliases, rate, today) for group in group_rows(rows, aliases)]
     days = sorted({p["day"] for p in products}, reverse=True)[:DAYS]
     recent = set(days)
     items = [p for p in products if p["day"] in recent or p.get("pe", "") >= today.isoformat()]

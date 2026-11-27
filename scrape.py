@@ -100,13 +100,15 @@ CSV_FIELDS = [
     "preorder_end", "status", "rating", "adult", "jan", "image_url", "thumb", "url",
     "size", "material", "sculptor", "painter", "bonus", "progress", "extra",
     "follows", "wants", "preorders", "owned", "score", "score_count", "views", "stats_date",
+    "gallery", "channel", "buy_limit", "weight", "stock_note",
 ]
 # Fields a detail page fills in; refresh_rows() copies these back onto stored rows.
 DETAIL_FIELDS = [
     "name", "name_alt", "maker", "series", "character", "category", "scale", "price", "currency",
-    "price_note", "release", "preorder_start", "preorder_end", "rating", "adult", "jan", "image_url",
+    "price_note", "release", "preorder_start", "preorder_end", "status", "rating", "adult", "jan", "image_url",
     "size", "material", "sculptor", "painter", "bonus", "progress", "extra",
     "follows", "wants", "preorders", "owned", "score", "score_count", "views", "stats_date",
+    "gallery", "channel", "buy_limit", "weight", "stock_note",
 ]
 # Days after an HPOI item is first seen when its page is read again for popularity, and how many
 # days after the last of them a run that missed it may still take the reading.
@@ -154,6 +156,11 @@ class Item:
     score_count: str = ""
     views: str = ""  # HPOI 条目访问 bucket, e.g. 少于1000
     stats_date: str = ""  # when the HPOI counts were read
+    gallery: str = ""  # up to 6 official gallery photo URLs separated by "|"
+    channel: str = ""  # distribution channel: 一般流通 / 官网限定 / 店铺限定 / 受注限定 / 魂限
+    buy_limit: str = ""  # per-person order limit, e.g. 限购 3 件
+    weight: str = ""  # item/package weight, e.g. 1200g / 1.96kg
+    stock_note: str = ""  # live stock/discount signal, e.g. 余量紧俏 / 店价 -12%
     thumb_src: str = ""  # where the thumbnail is downloaded from; not stored
 
     def row(self) -> dict[str, str]:
@@ -315,6 +322,55 @@ def parse_ymd(text: str) -> str:
 
 def has_adult_hint(text: str) -> bool:
     return bool(re.search(r"(?:18歳以上|R-?18|18禁|成人向|(?<![A-Za-z0-9])18\+|nsfw|cast-?off|adult only)", text or "", re.I))
+
+
+def join_gallery(urls: list[str], limit: int = 6) -> str:
+    seen, out = set(), []
+    for u in urls:
+        u = norm_img_url(u)
+        if u and u not in seen:
+            seen.add(u)
+            out.append(u)
+            if len(out) >= limit:
+                break
+    return "|".join(out)
+
+
+def parse_buy_limit(text: str) -> str:
+    """Extract per-person order cap like 'お一人様3点まで' -> '限购 3 件'."""
+    t = clean(text)
+    m = (re.search(r"お(?:一人|ひとり)様[^\d]{0,12}(\d{1,2})\s*(?:個|点|体|セット|箱|本)まで", t)
+         or re.search(r"(?:limit|max(?:imum)?)\s*(?:of\s*)?(\d{1,2})\s*(?:per\s*(?:person|customer|household|order))", t, re.I)
+         or re.search(r"每人限购\s*(\d{1,2})", t))
+    return f"限购 {m.group(1)} 件" if m else ""
+
+
+def parse_weight(text: str) -> str:
+    """Extract weight like '1200 g', '約1.96kg' -> '1.2kg' / '450g'."""
+    m = re.search(r"(?:weight|重量|重さ)?\s*[：:（(]?\s*(?:約|约)?\s*(\d+(?:\.\d+)?)\s*(kg|g)\b", clean(text), re.I)
+    if not m:
+        return ""
+    val, unit = float(m.group(1)), m.group(2).lower()
+    if unit == "kg":
+        return f"{val:g}kg" if 0.01 <= val <= 200 else ""
+    if val >= 1000:
+        return f"{val / 1000:.2f}".rstrip("0").rstrip(".") + "kg"
+    return f"{round(val)}g" if val >= 5 else ""
+
+
+def infer_channel(source: str, text: str, status: str = "") -> str:
+    t = clean(text)
+    if re.search(r"プレミアムバンダイ|魂ウェブ商店|p-?bandai|premium bandai", t, re.I):
+        return "魂限 / 官限"
+    if source == "Native" or re.search(r"ネイティブオンライン|native online", t, re.I):
+        return "官网限定"
+    if re.search(r"限定販売|ショップ限定|公式ショップ限定|オンライン(?:ストア)?限定|カドスト.*限定|store exclusive|online exclusive", t, re.I):
+        return "官网限定"
+    if re.search(r"あみあみ限定|アニメイト限定|限定版|exclusive|限定", status + " " + t[:400], re.I):
+        return "流通限定"
+    if "受注" in status:
+        return "受注限定"
+    return "一般流通"
 
 
 def clean(text: str | None) -> str:
@@ -571,6 +627,13 @@ def hpoi_detail(html: str, it: Item) -> None:
     if not it.image_url:
         cover = soup.select_one('.hpoi-ibox-img img[src], img[src*="/gk/cover/n/"], img[src*="/gk/cover/"]')
         it.image_url = norm_img_url(cover.get("src", "") if cover else "", HPOI_BASE) or og_image(soup, HPOI_BASE) or norm_img_url(it.thumb_src, HPOI_BASE)
+    pic_urls = [it.image_url] + [
+        norm_img_url(img.get("src", "").replace("/gk/pic/s/", "/gk/pic/n/"), HPOI_BASE)
+        for img in soup.select('img[src*="/gk/pic/"]')
+    ]
+    it.gallery = join_gallery(pic_urls, limit=6)
+    if not it.channel:
+        it.channel = infer_channel("HPOI", f"{it.name} {labels.get('属性', '')} {it.extra}", it.status)
 
 
 # --------------------------------------------------------------------------
@@ -647,6 +710,14 @@ def gsc_detail(html: str, it: Item) -> None:
         it.release = max(months)
     notes = [f"仕様：{spec}" if spec else "", f"发售记录：{sales_history(history)}" if history else ""]
     it.extra = "；".join(note for note in notes if note)
+    gsc_imgs = [it.image_url] + [
+        urljoin(GSC_HOME, img.get("src", ""))
+        for img in soup.select(f"img[src*='/product/image/{it.id}/'], img[src*='gsc-webrevo-sdk-storage-prd/product/image/']")
+    ]
+    it.gallery = join_gallery(gsc_imgs, limit=6)
+    page_text = clean(soup.get_text(" "))
+    it.buy_limit = parse_buy_limit(page_text[:5000])
+    it.channel = infer_channel("GoodSmile", f"{it.name} {page_text[:1500]}", it.status)
 
 
 # --------------------------------------------------------------------------
@@ -720,6 +791,21 @@ def hlj_detail(html: str, it: Item) -> None:
     if not it.scale:
         scale = re.match(r"(1/\d+)\s", it.name)
         it.scale = scale.group(1) if scale else ""
+    hlj_imgs = [it.image_url]
+    for img in soup.select("img[src*='productimages/'], img[src*='productthumbs/']"):
+        u = img.get("src", "")
+        if it.id.lower() in u.lower():
+            u = re.sub(r"/productthumbs/([^/]+)/thumb_([^?_]+)(?:_\d+)?(\.[a-z]+).*", r"/productimages/\1/\2\3", u, flags=re.I)
+            hlj_imgs.append(urljoin("https://www.hlj.com/", u))
+    it.gallery = join_gallery(hlj_imgs, limit=6)
+    page_text = clean(soup.get_text(" "))
+    if re.search(r"Order Stop|Out of Stock|Discontinued", page_text[:3000], re.I):
+        it.stock_note = "预订已满"
+    w_match = re.search(r"Item Size/Weight\s*[:：]\s*([^|\n]{5,60})", page_text, re.I)
+    if w_match:
+        it.weight = parse_weight(w_match.group(1))
+    it.buy_limit = parse_buy_limit(page_text[:4000])
+    it.channel = infer_channel("HLJ", it.name, it.status)
 
 
 # --------------------------------------------------------------------------
@@ -794,6 +880,10 @@ def sofmap_detail(html: str, it: Item) -> None:
     it.size = clean(size.group(1)) if size else ""
     material = re.search(r"(?:材質|素材)[：:]\s*([^・【※]{2,40})", text)
     it.material = clean(material.group(1)) if material else ""
+    it.buy_limit = parse_buy_limit(text[:4000])
+    it.channel = infer_channel("Sofmap", it.name, it.status)
+    if SOFMAP_FULL in it.status:
+        it.stock_note = "预订已满"
 
 
 # --------------------------------------------------------------------------
@@ -833,13 +923,25 @@ def solaris_list(text: str) -> list[Item]:
         # ("Honkai" for "Honkai: Star Rail - ..."); then the title's own first part says more.
         franchise, head = meta("franchise"), parts[0] if len(parts) > 1 else ""
         series = head if head and (not franchise or franchise.lower() in head.lower()) else franchise
+        p_imgs = [norm_img_url(im.get("src", "")) for im in (p.get("images") or []) if isinstance(im, dict) and im.get("src")]
+        grams = offer.get("grams") or 0
+        weight = parse_weight(f"{grams} g") if isinstance(grams, (int, float)) and grams >= 20 else ""
+        stock_note = ""
+        if early and not early.get("available") and offer.get("available"):
+            stock_note = "早鸟已满"
+        elif not offer.get("available"):
+            stock_note = "预订已满"
         items.append(Item(
             source="Solaris", id=str(p["id"]), url=f"https://solarisjapan.com/products/{p['handle']}",
             name=title, maker=maker, series=series,
             character=meta("character"), category="" if kind == "General" else kind,
             price=str(round(float(price.group(0)))) if price else "", currency="USD" if price else "",
-            status="预订中" if early and early.get("available") else "现货" if offer.get("available") else "",
+            status="预订中" if early and early.get("available") else "现货" if offer.get("available") else "预订已满",
             adult="1" if adult else "",
+            gallery=join_gallery(p_imgs, limit=6),
+            weight=weight,
+            stock_note=stock_note,
+            channel=infer_channel("Solaris", title + " " + " ".join(tags)),
             thumb_src=norm_img_url(image.get("src") if isinstance(image, dict) else ""),
         ))
     return items
@@ -876,6 +978,23 @@ def solaris_detail(html: str, it: Item) -> None:
     it.size = clean(re.sub(r"\([^)]*\)", "", size.group(1)).replace("=", " ")).rstrip(" ,x×") if size else ""
     scale = re.search(r"(?<![\d/])1/\d+(?!\d)", it.name)
     it.scale = scale.group(0) if scale else ""
+    if not it.gallery:
+        gal = []
+        raw_imgs = prod.get("image") if isinstance(prod.get("image"), list) else ([prod.get("image")] if prod.get("image") else [])
+        for u in raw_imgs:
+            if isinstance(u, str):
+                nu = norm_img_url(u)
+                gal.append(solaris_cdn_url(nu) or nu)
+        for img in soup.select("img[src*='/cdn/shop/files/'], img[src*='cdn.shopify.com/s/files/']"):
+            nu = norm_img_url(img.get("src", ""))
+            gal.append(solaris_cdn_url(nu) or nu)
+        it.gallery = join_gallery([it.image_url, *gal], limit=6)
+    if not it.weight:
+        wt = re.search(r"Weight\s+([\d.,]+\s*(?:g|kg))", text, re.I)
+        if wt:
+            it.weight = parse_weight(wt.group(1))
+    if not it.channel:
+        it.channel = infer_channel("Solaris", it.name, it.status)
 
 
 # --------------------------------------------------------------------------
@@ -951,9 +1070,20 @@ def native_detail(html: str, it: Item) -> None:
     if it.bonus and it.bonus not in ("なし", "無し", "—", "-"):
         tags.append("附特典")
     it.status = " · ".join(dict.fromkeys(tags))
-    it.image_url = og_image(soup, NATIVE_BASE) or norm_img_url(it.thumb_src, NATIVE_BASE)
-    if specs.get("付属品") and specs["付属品"] not in ("なし", "無し"):
-        it.extra = f"仕様：{specs['仕様']}；付属品：{specs['付属品']}" if specs.get("仕様") else f"付属品：{specs['付属品']}"
+    native_imgs = [
+        urljoin(NATIVE_BASE, img.get("src", ""))
+        for img in soup.select("img[src*='wp-content/uploads']")
+        if re.search(r"_\d{2}\.(?:jpg|jpeg|png|webp)$", img.get("src", ""), re.I)
+    ]
+    it.image_url = norm_img_url(native_imgs[0], NATIVE_BASE) if native_imgs else (og_image(soup, NATIVE_BASE) or norm_img_url(it.thumb_src, NATIVE_BASE))
+    it.gallery = join_gallery([it.image_url, *native_imgs], limit=6)
+    it.buy_limit = parse_buy_limit(specs.get("購入制限", "") + " " + text[:4000])
+    it.channel = infer_channel("Native", text[:2000], it.status)
+    if "预订已满" in it.status:
+        it.stock_note = "预订已满"
+    acc = specs.get("付属品", "")
+    extra_parts = [f"仕様：{specs['仕様']}" if specs.get("仕様") else "", f"配件：{acc}" if acc and acc not in ("なし", "無し") else ""]
+    it.extra = "；".join(p for p in extra_parts if p)
 
 
 # --------------------------------------------------------------------------
@@ -1044,10 +1174,23 @@ def tokyofigure_detail(html: str, it: Item) -> None:
     it.status = " · ".join(dict.fromkeys(tags))
     if has_adult_hint(text[:2500]):
         it.adult = "1"
-    it.image_url = og_image(soup, TF_BASE)
-    if not it.image_url:
-        img = soup.select_one("img[src*='save_image']")
-        it.image_url = norm_img_url(img.get("src", "") if img else "", TF_BASE) or norm_img_url(it.thumb_src, TF_BASE)
+    # Tokyo Figure's og:image is always a cropped 16:9 close-up banner; the product gallery's
+    # save_image photos (excluding the header logo) hold the complete full-body studio shots.
+    gal = [
+        urljoin(TF_BASE, img.get("src", ""))
+        for img in soup.select("img[src*='save_image']")
+        if "0218170745_67b43fd1499eb" not in (img.get("src") or "")
+    ]
+    it.gallery = join_gallery(gal, limit=6)
+    if gal:
+        it.image_url = norm_img_url(gal[0], TF_BASE)
+    else:
+        it.image_url = og_image(soup, TF_BASE) or norm_img_url(it.thumb_src, TF_BASE)
+    it.buy_limit = parse_buy_limit(text[:4000])
+    it.weight = parse_weight(specs.get("サイズ", "") + " " + specs.get("重量", ""))
+    it.channel = infer_channel("TokyoFigure", it.name + " " + text[:1500], it.status)
+    if "预订已满" in it.status:
+        it.stock_note = "预订已满"
 
 
 # --------------------------------------------------------------------------
@@ -1121,6 +1264,15 @@ def megahobby_detail(html: str, it: Item) -> None:
         tags.append("附特典")
     it.status = " · ".join(dict.fromkeys(tags))
     it.image_url = og_image(soup, MH_BASE) or norm_img_url(it.thumb_src, MH_BASE)
+    mh_imgs = [it.image_url] + [
+        urljoin(MH_BASE, img.get("src", ""))
+        for img in soup.select(f"img[src*='item_{it.id.zfill(10)}'], img[src*='_{it.id}_']")
+    ]
+    it.gallery = join_gallery(mh_imgs, limit=6)
+    it.channel = infer_channel("MegaHobby", it.name + " " + text[:1500], it.status)
+    set_c = re.search(r"■?\s*セット内容[：:\s]*([^■※\n]{4,140})", text)
+    if set_c:
+        it.extra = f"配件：{clean(set_c.group(1))}"
 
 
 # --------------------------------------------------------------------------
@@ -1197,6 +1349,14 @@ def kdcolle_detail(html: str, it: Item) -> None:
     if spec:
         it.extra = f"仕様：{spec}"
     it.image_url = og_image(soup, KDCOLLE_BASE) or norm_img_url(it.thumb_src, KDCOLLE_BASE)
+    kd_imgs = [it.image_url] + [
+        urljoin(KDCOLLE_BASE, img.get("src", ""))
+        for img in soup.select("img[src*='/media/']")
+        if not any(bad in (img.get("src") or "").lower() for bad in ("logo", "kadg", "banner", "icon"))
+    ]
+    it.gallery = join_gallery(kd_imgs, limit=6)
+    it.buy_limit = parse_buy_limit(text[:4000])
+    it.channel = infer_channel("KDcolle", it.name + " " + text[:2500], it.status)
 
 
 # --------------------------------------------------------------------------
@@ -1272,6 +1432,23 @@ def hobbygenki_detail(html: str, it: Item) -> None:
             large = (cover.get("large") or {}).get("url") or (cover.get("bySize", {}).get("large_default") or {}).get("url")
             if large:
                 it.image_url = norm_img_url(large, GENKI_BASE)
+        gal = []
+        for im in data.get("images") or []:
+            if isinstance(im, dict):
+                u = (im.get("large") or {}).get("url") or (im.get("bySize", {}).get("large_default") or {}).get("url")
+                if u:
+                    gal.append(u)
+        it.gallery = join_gallery([it.image_url, *gal], limit=6)
+        disc = clean(str(data.get("discount_percentage_absolute") or ""))
+        qty = data.get("quantity")
+        notes = []
+        if disc:
+            notes.append(f"店价 -{disc.lstrip('-')}")
+        if data.get("availability") == "unavailable" or qty == 0:
+            notes.append("预订已满")
+        elif isinstance(qty, int) and 0 < qty <= 5:
+            notes.append(f"仅剩 {qty} 件")
+        it.stock_note = " · ".join(notes)
     if not it.image_url:
         it.image_url = og_image(soup, GENKI_BASE) or norm_img_url(it.thumb_src, GENKI_BASE)
     desc = soup.select_one("#description, .product-description")
@@ -1284,7 +1461,9 @@ def hobbygenki_detail(html: str, it: Item) -> None:
     if scale:
         it.scale = scale.group(0)
     tags = []
-    if it.release and it.release >= datetime.now(BEIJING).strftime("%Y-%m"):
+    if "预订已满" in it.stock_note:
+        tags.append("预订已满")
+    elif it.release and it.release >= datetime.now(BEIJING).strftime("%Y-%m"):
         tags.append("预订中")
     elif "pre-order" in (dtxt[:400] + " " + clean(soup.get_text(" ")[:2000])).lower():
         tags.append("预订中")
@@ -1297,6 +1476,8 @@ def hobbygenki_detail(html: str, it: Item) -> None:
     if re.search(r"bonus", it.name, re.I):
         tags.append("附特典")
     it.status = " · ".join(dict.fromkeys(tags))
+    it.channel = infer_channel("HobbyGenki", it.name + " " + dtxt[:400], it.status)
+    it.buy_limit = parse_buy_limit(dtxt[:2000])
     if has_adult_hint(it.name + " " + dtxt[:400]):
         it.adult = "1"
 
@@ -1344,9 +1525,11 @@ def ninningame_detail(html: str, it: Item) -> None:
         code = clean(str(prod.get("gtin13") or prod.get("gtin") or prod.get("sku") or ""))
         if re.fullmatch(r"\d{8,14}", code):
             it.jan = code
-        image = first(prod.get("image"))
-        if isinstance(image, str):
-            it.image_url = norm_img_url(image, NIN_BASE)
+        raw_imgs = prod.get("image") if isinstance(prod.get("image"), list) else ([prod.get("image")] if prod.get("image") else [])
+        gal = [norm_img_url(u, NIN_BASE) for u in raw_imgs if isinstance(u, str)]
+        if gal:
+            it.image_url = gal[0]
+            it.gallery = join_gallery(gal, limit=6)
         offer = first(prod.get("offers")) or {}
         raw_price = re.search(r"\d+(?:\.\d+)?", str(offer.get("price") or "").replace(",", ""))
         if raw_price:
@@ -1378,10 +1561,15 @@ def ninningame_detail(html: str, it: Item) -> None:
     if scale:
         it.scale = scale.group(0)
     tags = []
-    if re.search(r"PRE-?ORDER", text[:3000], re.I):
+    if re.search(r"Out of stock|Sold out|Notify me when available", text[:3000], re.I):
+        tags.append("预订已满")
+        it.stock_note = "预订已满"
+    elif re.search(r"PRE-?ORDER", text[:3000], re.I):
         tags.append("预订中")
     else:
         tags.append("现货")
+    if re.search(r"Last items in stock", text[:3500], re.I) and not it.stock_note:
+        it.stock_note = "余量紧俏"
     if re.search(r"re-?issue|re-?release|re-?run", it.name, re.I):
         tags.append("再贩")
     if re.search(r"limited|exclusive", it.name + " " + text[:2500], re.I):
@@ -1389,6 +1577,8 @@ def ninningame_detail(html: str, it: Item) -> None:
     if re.search(r"bonus", it.name, re.I):
         tags.append("附特典")
     it.status = " · ".join(dict.fromkeys(tags))
+    it.channel = infer_channel("NinNinGame", it.name + " " + text[:1500], it.status)
+    it.buy_limit = parse_buy_limit(text[:3500])
     if has_adult_hint(it.name + " " + text[:2000]):
         it.adult = "1"
 
@@ -1433,16 +1623,20 @@ def figuya_detail(html: str, it: Item) -> None:
         code = clean(str(prod.get("gtin13") or prod.get("gtin") or ""))
         if re.fullmatch(r"\d{8,14}", code):
             it.jan = code
-        image = first(prod.get("image"))
-        if isinstance(image, str):
-            it.image_url = norm_img_url(image, FIGUYA_BASE)
+        raw_imgs = prod.get("image") if isinstance(prod.get("image"), list) else ([prod.get("image")] if prod.get("image") else [])
+        gal = [norm_img_url(u, FIGUYA_BASE) for u in raw_imgs if isinstance(u, str)]
+        if gal:
+            it.image_url = gal[0]
+            it.gallery = join_gallery(gal, limit=6)
         offer = first(prod.get("offers")) or {}
         raw_price = re.search(r"\d+(?:\.\d+)?", str(offer.get("price") or "").replace(",", ""))
         if raw_price:
             it.price = str(round(float(raw_price.group(0))))
             it.currency = currency_of(offer.get("priceCurrency")) or "EUR"
         avail = str(offer.get("availability") or "")
-        tags = ["预订中"] if "PreOrder" in avail else ["现货"] if "InStock" in avail else []
+        tags = ["预订中"] if "PreOrder" in avail else ["现货"] if "InStock" in avail else ["预订已满"] if "OutOfStock" in avail else []
+        if "OutOfStock" in avail:
+            it.stock_note = "预订已满"
     else:
         tags = []
     if not it.image_url:
@@ -1464,6 +1658,7 @@ def figuya_detail(html: str, it: Item) -> None:
     rel_raw = specs.get("Release date") or ""
     it.release = "" if rel_raw.strip().lower() == "released" else (month_of(rel_raw) or it.release)
     it.size = specs.get("Size") or ""
+    it.weight = parse_weight(specs.get("Weight") or "")
     it.material = specs.get("Material") or ""
     it.sculptor = specs.get("Sculpted by") or ""
     scale_src = specs.get("Scale") or it.name
@@ -1476,6 +1671,7 @@ def figuya_detail(html: str, it: Item) -> None:
     if re.search(r"bonus", it.name, re.I):
         tags.append("附特典")
     it.status = " · ".join(dict.fromkeys(tags))
+    it.channel = infer_channel("Figuya", it.name, it.status)
     if has_adult_hint(it.name + " " + specs.get("Category", "") + " " + specs.get("Age rating", "")):
         it.adult = "1"
 
