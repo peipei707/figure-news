@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""figure-news: a daily digest of new figures from HPOI, Good Smile, HLJ, Sofmap and Solaris Japan.
+"""figure-news: a daily digest of new figures from 12 figure websites and shops.
 
 Each run reads every source's "new items" listing, opens the detail page of
 items it has not seen before, and writes:
@@ -61,7 +61,7 @@ THUMB_UPGRADE_DAYS = 60
 
 # Seconds between two requests to the same host. HPOI's robots.txt asks for 5.
 DEFAULT_DELAY = float(os.environ.get("FIGURE_NEWS_DELAY", "3"))
-HOST_DELAY = {"www.hpoi.net": 5.0, "rfx.hpoi.net": 5.0, "a.sofmap.com": 15.0}
+HOST_DELAY = {"www.hpoi.net": 5.0, "rfx.hpoi.net": 5.0, "a.sofmap.com": 15.0, "solarisjapan.com": 6.0}
 # Sofmap answers 403 to the sixth product page read within a few minutes, so its
 # listing is the source of record and only a few product pages are read per run.
 SOFMAP_DETAILS = int(os.environ.get("FIGURE_NEWS_SOFMAP_DETAILS", "3"))
@@ -79,7 +79,20 @@ BACKFILL = "旧品补录"
 ADULT_WORDS = ("观感成熟", "R18", "R-18", "18禁", "成人")
 HPOI_ADULT_FILTER = "r18=315"
 
-SOURCES = {"HPOI": "HPOI", "GoodSmile": "Good Smile 官网", "HLJ": "HLJ", "Sofmap": "Sofmap", "Solaris": "Solaris Japan"}
+SOURCES = {
+    "HPOI": "HPOI",
+    "GoodSmile": "Good Smile 官网",
+    "Native": "Native 官网",
+    "MegaHobby": "MegaHouse 官网",
+    "KDcolle": "KDcolle 官网",
+    "TokyoFigure": "Tokyo Figure",
+    "Sofmap": "Sofmap",
+    "HLJ": "HLJ",
+    "HobbyGenki": "Hobby-Genki",
+    "NinNinGame": "Nin-Nin-Game",
+    "Solaris": "Solaris Japan",
+    "Figuya": "Figuya",
+}
 
 CSV_FIELDS = [
     "first_seen", "source", "id", "name", "name_alt", "maker", "series", "character", "category",
@@ -200,6 +213,7 @@ class Fetcher:
             except requests.RequestException:
                 if attempt == 2:
                     raise
+                time.sleep(2)
                 continue
             if resp.status_code >= 500 and attempt == 1 and not looks_like_challenge(resp):
                 resp.close()
@@ -207,12 +221,13 @@ class Fetcher:
             return resp
         raise AssertionError("unreachable")
 
-    def _allow(self, url: str) -> None:
+    def _allow(self, url: str, referer: str | None = None) -> None:
         parts = urlparse(url)
         rules = self.robots.get(parts.netloc)
         if rules is None:
             rules = RobotFileParser()
-            resp = self._get(f"{parts.scheme}://{parts.netloc}/robots.txt")
+            hdrs = {"Referer": referer} if referer else None
+            resp = self._get(f"{parts.scheme}://{parts.netloc}/robots.txt", headers=hdrs)
             if looks_like_challenge(resp):
                 raise Blocked(f"{parts.netloc} 返回人机验证")
             if resp.status_code in (401, 403):
@@ -241,9 +256,10 @@ class Fetcher:
             encoding = "cp932"  # what Japanese sites that say Shift_JIS actually send (①, ～, ㈱ ...)
         return resp.content.decode(encoding, errors="replace")
 
-    def image(self, url: str) -> bytes:
-        self._allow(url)
-        with self._get(url, stream=True) as resp:
+    def image(self, url: str, referer: str | None = None) -> bytes:
+        self._allow(url, referer=referer)
+        hdrs = {"Referer": referer} if referer else None
+        with self._get(url, stream=True, headers=hdrs) as resp:
             if resp.status_code == 429:  # for a picture a 403 can just mean "no such file"; a 429 cannot
                 host = urlparse(url).netloc
                 self.refused[host] = f"{host} 要求放慢（HTTP 429），这次先停"
@@ -261,8 +277,43 @@ class Fetcher:
 # Parsing helpers
 
 MONTHS = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
-CURRENCIES = {"yen": "JPY", "jpy": "JPY", "日元": "JPY", "円": "JPY", "cny": "CNY", "rmb": "CNY",
-              "元": "CNY", "人民币": "CNY", "usd": "USD", "美元": "USD"}
+CURRENCIES = {"yen": "JPY", "jpy": "JPY", "日元": "JPY", "円": "JPY", "¥": "JPY",
+              "cny": "CNY", "rmb": "CNY", "元": "CNY", "人民币": "CNY",
+              "usd": "USD", "美元": "USD", "$": "USD", "us$": "USD",
+              "eur": "EUR", "欧元": "EUR", "€": "EUR"}
+
+
+def norm_img_url(url: str, base: str = "") -> str:
+    url = clean(url)
+    if not url or url.startswith("data:"):
+        return ""
+    if base:
+        url = urljoin(base, url)
+    elif url.startswith("//"):
+        url = "https:" + url
+    return re.sub(r"(https?://[^/]+)//+", r"\1/", url)
+
+
+def og_image(soup: BeautifulSoup, base: str = "") -> str:
+    for attrs in ({"property": "og:image"}, {"name": "twitter:image"}, {"property": "og:image:secure_url"}):
+        tag = soup.find("meta", attrs=attrs)
+        if tag and tag.get("content"):
+            url = norm_img_url(tag["content"], base)
+            if url:
+                return url
+    return ""
+
+
+def parse_ymd(text: str) -> str:
+    """'2026年11月20日', '2026/11/5 12:00', '2027-01-12' -> 'YYYY-MM-DD' or ''."""
+    m = re.search(r"(20\d{2})\s*[年/.-]\s*(\d{1,2})\s*[月/.-]\s*(\d{1,2})", clean(text))
+    if m and 1 <= int(m.group(2)) <= 12 and 1 <= int(m.group(3)) <= 31:
+        return f"{m.group(1)}-{int(m.group(2)):02d}-{int(m.group(3)):02d}"
+    return ""
+
+
+def has_adult_hint(text: str) -> bool:
+    return bool(re.search(r"(?:18歳以上|R-?18|18禁|成人向|(?<![A-Za-z0-9])18\+|nsfw|cast-?off|adult only)", text or "", re.I))
 
 
 def clean(text: str | None) -> str:
@@ -493,30 +544,32 @@ def hpoi_detail(html: str, it: Item) -> None:
     bonus = soup.find(string=re.compile(r"^\s*特典[：:]"))
     it.bonus = clean(re.sub(r"^\s*特典[：:]", "", bonus)) if bonus else ""
     prod = ld_product(soup)
-    if not prod:
-        return
-    info = key_values(prod.get("description", ""))
-    it.name = clean(prod.get("name")) or it.name
-    it.name_alt = clean(first(prod.get("alternateName")) or "")
-    it.maker = name_of(prod.get("manufacturer")) or info.get("制作", "") or it.maker
-    it.series = info.get("作品", "")
-    it.character = info.get("角色", "")
-    it.category = " · ".join(x for x in (clean(prod.get("category")), info.get("系列", "")) if x)
-    it.scale = info.get("比例", "") or labels.get("比例", "")
-    it.image_url = clean(first(prod.get("image")) or "")
-    price_text = info.get("定价", "")
-    offer = first(prod.get("offers")) or {}
-    it.price = price_digits(offer.get("price")) or price_digits(price_text)
-    if it.price:
-        it.currency = currency_of(offer.get("priceCurrency"), price_text)
-    note = re.search(r"[（(]([^）)]*)[）)]", price_text)
-    it.price_note = clean(note.group(1)) if note else ""
-    attrs = info.get("属性", "")
-    rating = re.search(r"观感\S+", attrs)
-    it.rating = rating.group(0) if rating else ""
-    if any(word in attrs for word in ADULT_WORDS):
-        it.adult = "1"
-    it.release = month_of(info.get("出货日") or info.get("发售日") or prod.get("releaseDate") or "") or it.release
+    if prod:
+        info = key_values(prod.get("description", ""))
+        it.name = clean(prod.get("name")) or it.name
+        it.name_alt = clean(first(prod.get("alternateName")) or "")
+        it.maker = name_of(prod.get("manufacturer")) or info.get("制作", "") or it.maker
+        it.series = info.get("作品", "")
+        it.character = info.get("角色", "")
+        it.category = " · ".join(x for x in (clean(prod.get("category")), info.get("系列", "")) if x)
+        it.scale = info.get("比例", "") or labels.get("比例", "")
+        it.image_url = norm_img_url(first(prod.get("image")) or "", HPOI_BASE)
+        price_text = info.get("定价", "")
+        offer = first(prod.get("offers")) or {}
+        it.price = price_digits(offer.get("price")) or price_digits(price_text)
+        if it.price:
+            it.currency = currency_of(offer.get("priceCurrency"), price_text)
+        note = re.search(r"[（(]([^）)]*)[）)]", price_text)
+        it.price_note = clean(note.group(1)) if note else ""
+        attrs = info.get("属性", "")
+        rating = re.search(r"观感\S+", attrs)
+        it.rating = rating.group(0) if rating else ""
+        if any(word in attrs for word in ADULT_WORDS):
+            it.adult = "1"
+        it.release = month_of(info.get("出货日") or info.get("发售日") or prod.get("releaseDate") or "") or it.release
+    if not it.image_url:
+        cover = soup.select_one('.hpoi-ibox-img img[src], img[src*="/gk/cover/n/"], img[src*="/gk/cover/"]')
+        it.image_url = norm_img_url(cover.get("src", "") if cover else "", HPOI_BASE) or og_image(soup, HPOI_BASE) or norm_img_url(it.thumb_src, HPOI_BASE)
 
 
 # --------------------------------------------------------------------------
@@ -786,9 +839,7 @@ def solaris_list(text: str) -> list[Item]:
             price=str(round(float(price.group(0)))) if price else "", currency="USD" if price else "",
             status="预订中" if early and early.get("available") else "现货" if offer.get("available") else "",
             adult="1" if adult else "",
-            # The shop blurs pictures of items it tags nsfw until the visitor clicks through. They are
-            # not HPOI's edited covers, so these items are recorded without a picture.
-            thumb_src="" if adult else clean(image.get("src") if isinstance(image, dict) else ""),
+            thumb_src=norm_img_url(image.get("src") if isinstance(image, dict) else ""),
         ))
     return items
 
@@ -801,8 +852,10 @@ def solaris_detail(html: str, it: Item) -> None:
         code = code[1:] if re.fullmatch(r"0\d{13}", code) else code
         it.jan = code if re.fullmatch(r"\d{8,14}", code) else ""
         image = first(prod.get("image"))
-        it.image_url = image if isinstance(image, str) and not it.adult else ""
+        it.image_url = norm_img_url(image) if isinstance(image, str) else ""
         it.maker = it.maker or name_of(prod.get("brand"))
+    if not it.image_url:
+        it.image_url = og_image(soup, it.url) or norm_img_url(it.thumb_src)
     text = clean(soup.get_text(" "))
     release = re.search(r"Release Date\s+((?:\d{1,2}\.?\s+)?[A-Za-z]{3,9}\.?\s+20\d{2}|20\d{2}[-/.]\d{1,2})", text)
     it.release = month_of(release.group(1)) if release else ""
@@ -810,6 +863,608 @@ def solaris_detail(html: str, it: Item) -> None:
     it.size = clean(re.sub(r"\([^)]*\)", "", size.group(1)).replace("=", " ")).rstrip(" ,x×") if size else ""
     scale = re.search(r"(?<![\d/])1/\d+(?!\d)", it.name)
     it.scale = scale.group(0) if scale else ""
+
+
+# --------------------------------------------------------------------------
+# Native official site (www.native-web.jp): Native, BINDing, FROG, Rocket Boy,
+# Second Axe, Pink・Cat, CAMELOT, Magic Bullets, etc.
+
+NATIVE_BASE = "https://www.native-web.jp/"
+NATIVE_FEEDS = [
+    ["https://www.native-web.jp/creators/"],
+    ["https://www.native-web.jp/characters/"],
+]
+
+
+def native_list(html: str) -> list[Item]:
+    soup = BeautifulSoup(html, "html.parser")
+    items, seen = [], set()
+    for a in soup.select("a[href]"):
+        href = urljoin(NATIVE_BASE, a["href"])
+        m = re.search(r"native-web\.jp/(creators|characters)/(\d+)/?$", href)
+        if not m or m.group(2) in seen:
+            continue
+        seen.add(m.group(2))
+        img = a.find("img")
+        thumb = norm_img_url(img.get("src", "") if img else "", NATIVE_BASE)
+        heading = a.find(["h2", "h3", "h4", "p"])
+        name = clean(heading.get_text(" ")) if heading else clean(a.get_text(" "))
+        name = re.sub(r"\s*発売時期[：:].*$", "", name).strip()
+        items.append(Item(
+            source="Native", id=m.group(2), url=href,
+            name=name, thumb_src=thumb,
+        ))
+        if len(items) >= 12:
+            break
+    return items
+
+
+def native_detail(html: str, it: Item) -> None:
+    soup = BeautifulSoup(html, "html.parser")
+    specs = label_pairs(soup)
+    it.name = specs.get("商品名") or it.name
+    it.series = specs.get("作品名") or ""
+    it.maker = specs.get("発売元") or specs.get("販売元") or "ネイティブ"
+    price_text = specs.get("価格", "")
+    it.price = price_digits(price_text)
+    if it.price:
+        it.currency = "JPY"
+    it.release = month_of(specs.get("発売", "")) or it.release
+    it.material = specs.get("仕様", "")
+    size_text = specs.get("サイズ", "")
+    scale = re.search(r"1/\d+", size_text)
+    it.scale = scale.group(0) if scale else ("ノンスケール" if "ノンスケール" in size_text else "")
+    size = re.search(r"(?:全高|全長|高さ|サイズ)[：:]?\s*約?\s*[\d.]+\s*(?:mm|cm)(?:（[^）]*）)?", size_text)
+    it.size = size.group(0) if size else size_text
+    it.sculptor = specs.get("原型制作", "") or specs.get("原型", "")
+    it.painter = specs.get("彩色制作", "") or specs.get("彩色", "")
+    it.bonus = specs.get("特典", "")
+    if has_adult_hint(specs.get("対象年齢", "") + " " + it.name):
+        it.adult = "1"
+    text = clean(soup.get_text(" "))
+    window = re.search(r"予約受付期間\s*(20\d{2}年\d{1,2}月\d{1,2}日[^～〜\-]*)[～〜\-]\s*(20\d{2}年\d{1,2}月\d{1,2}日)", text)
+    if window:
+        it.preorder_start = parse_ymd(window.group(1))
+        it.preorder_end = parse_ymd(window.group(2))
+    tags = []
+    if "予約受付中" in text or "Preorder Now" in text:
+        tags.append("预订中")
+    elif "予約受付終了" in text or "受付終了" in text:
+        tags.append("预订已满")
+    if "再販" in text[:1500]:
+        tags.append("再贩")
+    if "オンライン" in text[:2500] or "限定" in it.name:
+        tags.append("官网限定")
+    if it.bonus and it.bonus not in ("なし", "無し", "—", "-"):
+        tags.append("附特典")
+    it.status = " · ".join(dict.fromkeys(tags))
+    it.image_url = og_image(soup, NATIVE_BASE) or norm_img_url(it.thumb_src, NATIVE_BASE)
+    if specs.get("付属品") and specs["付属品"] not in ("なし", "無し"):
+        it.extra = f"仕様：{specs['仕様']}；付属品：{specs['付属品']}" if specs.get("仕様") else f"付属品：{specs['付属品']}"
+
+
+# --------------------------------------------------------------------------
+# Tokyo Figure (tokyofigure.jp): Japanese distributor for ALTER, Stronger,
+# Mimeyoi, Knead, APEX, Myethos, AniGame, Prime 1 Studio, Reverse Studio, etc.
+
+TF_BASE = "https://tokyofigure.jp/"
+TF_LIST = "https://tokyofigure.jp/products/list.php"
+
+
+def tokyofigure_list(html: str) -> list[Item]:
+    soup = BeautifulSoup(html, "html.parser")
+    items, by_id = [], {}
+    for a in soup.select("a[href*='/products/detail/']"):
+        href = urljoin(TF_BASE, a["href"])
+        m = re.search(r"/products/detail/(\d+)", href)
+        if not m:
+            continue
+        pid = m.group(1)
+        img = a.find("img")
+        thumb = norm_img_url(img.get("src", "") if img else "", TF_BASE)
+        name = clean(a.get_text(" "))
+        if pid not in by_id:
+            it = Item(source="TokyoFigure", id=pid, url=f"https://tokyofigure.jp/products/detail/{pid}",
+                      name=name, thumb_src=thumb)
+            by_id[pid] = it
+            items.append(it)
+        else:
+            if name and not by_id[pid].name:
+                by_id[pid].name = name
+            if thumb and not by_id[pid].thumb_src:
+                by_id[pid].thumb_src = thumb
+        if len(items) >= 20:
+            break
+    return items
+
+
+def tokyofigure_detail(html: str, it: Item) -> None:
+    soup = BeautifulSoup(html, "html.parser")
+    title = soup.title.get_text(" ", strip=True) if soup.title else ""
+    if " / " in title:
+        it.name = clean(title.split(" / ", 1)[1]) or it.name
+    raw_pairs = label_pairs(soup)
+    specs = {k.rstrip("：:"): v for k, v in raw_pairs.items()}
+    it.maker = specs.get("メーカー") or specs.get("発売元") or it.maker
+    it.series = specs.get("原作") or specs.get("作品名") or ""
+    it.character = specs.get("キャラクター") or ""
+    it.category = specs.get("商品カテゴリ") or ""
+    it.preorder_start = parse_ymd(specs.get("予約開始", ""))
+    it.preorder_end = parse_ymd(specs.get("予約終了", ""))
+    jan = clean(specs.get("JANコード", ""))
+    it.jan = jan if re.fullmatch(r"\d{8,14}", jan) else ""
+    it.release = month_of(specs.get("発売時期") or specs.get("発売日") or "") or it.release
+    it.sculptor = specs.get("原型") or specs.get("原型制作") or ""
+    it.painter = specs.get("彩色") or specs.get("彩色制作") or ""
+    it.material = specs.get("素材") or specs.get("材質") or ""
+    it.size = specs.get("サイズ") or ""
+    scale_src = specs.get("スケール") or it.name
+    scale = re.search(r"1/\d+", scale_src)
+    it.scale = scale.group(0) if scale else ("ノンスケール" if "ノンスケール" in scale_src else "")
+    for sel in (".price", ".ec-price__price", "[class*='price']"):
+        for el in soup.select(sel):
+            txt = clean(el.get_text(" "))
+            if "円" in txt:
+                p = price_digits(txt)
+                if p:
+                    it.price, it.currency = p, "JPY"
+                    break
+        if it.price:
+            break
+    text = clean(soup.get_text(" "))
+    if not it.price:
+        m = re.search(r"税込価格[^\d]{0,20}([\d,]+)\s*円", text)
+        if m:
+            it.price, it.currency = price_digits(m.group(1)), "JPY"
+    tags = []
+    if any(w in text for w in ("予約注文する", "予約受付中", "予約する")):
+        tags.append("预订中")
+    elif any(w in text for w in ("予約終了", "販売終了", "SOLD OUT", "在庫切れ")):
+        tags.append("预订已满")
+    if "再販" in it.name:
+        tags.append("再贩")
+    if "限定" in it.name or "限定版" in text[:1500]:
+        tags.append("官网限定")
+    if "特典" in it.name or specs.get("特典"):
+        tags.append("附特典")
+        it.bonus = specs.get("特典", "")
+    it.status = " · ".join(dict.fromkeys(tags))
+    if has_adult_hint(text[:2500]):
+        it.adult = "1"
+    it.image_url = og_image(soup, TF_BASE)
+    if not it.image_url:
+        img = soup.select_one("img[src*='save_image']")
+        it.image_url = norm_img_url(img.get("src", "") if img else "", TF_BASE) or norm_img_url(it.thumb_src, TF_BASE)
+
+
+# --------------------------------------------------------------------------
+# MegaHobby (www.megahobby.jp): MegaHouse official figure catalogue.
+
+MH_BASE = "https://www.megahobby.jp/"
+MH_LIST = "https://www.megahobby.jp/products/"
+
+
+def megahobby_list(html: str) -> list[Item]:
+    soup = BeautifulSoup(html, "html.parser")
+    items, seen = [], set()
+    for a in soup.select("a[href*='/products/item/']"):
+        m = re.fullmatch(r"/products/item/(\d+)/?", a.get("href", ""))
+        if not m or m.group(1) in seen:
+            continue
+        pid = m.group(1)
+        seen.add(pid)
+        txt = clean(a.get_text(" "))
+        name = re.sub(r"\s*(?:発売日|希望小売価格|価格)[：:].*$", "", txt).strip()
+        rel = re.search(r"発売日[：:]\s*([^\s希望]+)", txt)
+        pr = re.search(r"価格[：:]\s*([\d,]+)\s*円", txt)
+        img = a.find("img")
+        thumb = norm_img_url(img.get("src", "") if img else "", MH_BASE)
+        items.append(Item(
+            source="MegaHobby", id=pid, url=f"https://www.megahobby.jp/products/item/{pid}/",
+            name=name, maker="MegaHouse",
+            price=price_digits(pr.group(1)) if pr else "", currency="JPY" if pr else "",
+            release=month_of(rel.group(1)) if rel else "",
+            thumb_src=thumb,
+        ))
+        if len(items) >= 15:
+            break
+    return items
+
+
+def megahobby_detail(html: str, it: Item) -> None:
+    soup = BeautifulSoup(html, "html.parser")
+    crumbs = [clean(a.get_text()) for a in soup.select(".breadcrumb a, #breadcrumb a, .pankuzu a") if clean(a.get_text())]
+    if len(crumbs) >= 2:
+        it.category = " · ".join(c for c in crumbs[1:] if c not in ("トップページ", "商品情報"))
+    title = soup.title.get_text(" ", strip=True) if soup.title else ""
+    if "｜" in title and not it.name:
+        it.name = clean(title.split("｜", 1)[0])
+    for dl in soup.select("dl")[:6]:
+        t = clean(dl.get_text(" "))
+        if not it.price and "円" in t:
+            m = re.search(r"([\d,]+)\s*円", t)
+            if m:
+                it.price, it.currency = price_digits(m.group(1)), "JPY"
+        if not it.release and re.search(r"20\d{2}年\d{1,2}月", t):
+            it.release = month_of(t)
+    text = clean(soup.get_text(" "))
+    size = re.search(r"(?:全高|全長|サイズ)[：:]?\s*約?\s*[\d.]+\s*(?:mm|cm)", text)
+    if size:
+        it.size = size.group(0)
+    scale = re.search(r"(?<![\d/])1/\d+(?!\d)", it.name + " " + text[:1500])
+    if scale:
+        it.scale = scale.group(0)
+    series = re.search(r"『([^』]{2,40})』", text[:2000])
+    if series:
+        it.series = clean(series.group(1))
+    tags = []
+    if re.search(r"予約", text[:3000]):
+        tags.append("预订中")
+    if "再販" in it.name:
+        tags.append("再贩")
+    if "限定" in it.name:
+        tags.append("官网限定")
+    if "特典" in it.name or "付き】" in it.name:
+        tags.append("附特典")
+    it.status = " · ".join(dict.fromkeys(tags))
+    it.image_url = og_image(soup, MH_BASE) or norm_img_url(it.thumb_src, MH_BASE)
+
+
+# --------------------------------------------------------------------------
+# KDcolle (kdcolle.kadokawa.co.jp): KADOKAWA Collection official figures.
+
+KDCOLLE_BASE = "https://kdcolle.kadokawa.co.jp/"
+KDCOLLE_LIST = "https://kdcolle.kadokawa.co.jp/product/"
+
+
+def kdcolle_list(html: str) -> list[Item]:
+    soup = BeautifulSoup(html, "html.parser")
+    items, seen = [], set()
+    for a in soup.select("a[href]"):
+        href = urljoin(KDCOLLE_BASE, a["href"])
+        m = re.search(r"/product/([^/]+)/([^/]+)\.html$", href)
+        if not m or "/tag/" in href or "/page/" in href:
+            continue
+        pid = re.sub(r"^entry-", "", m.group(2))
+        if pid in seen:
+            continue
+        seen.add(pid)
+        box = a.find_parent(["li", "article", "div"]) or a
+        img = a.find("img") or box.find("img")
+        thumb = norm_img_url(img.get("src", "") if img else "", KDCOLLE_BASE)
+        txt = clean(a.get_text(" "))
+        name = re.sub(r"\s*20\d{2}年\d{1,2}月発売.*$", "", txt).strip()
+        items.append(Item(
+            source="KDcolle", id=pid, url=href,
+            name=name, maker="KADOKAWA", thumb_src=thumb,
+        ))
+        if len(items) >= 20:
+            break
+    return items
+
+
+def kdcolle_detail(html: str, it: Item) -> None:
+    soup = BeautifulSoup(html, "html.parser")
+    specs = label_pairs(soup)
+    it.name = specs.get("商品名") or it.name
+    it.series = specs.get("作品名") or ""
+    it.category = specs.get("カテゴリー") or ""
+    it.maker = specs.get("発売元") or specs.get("企画・制作") or "KADOKAWA"
+    price_text = specs.get("価格（税込）") or specs.get("価格") or specs.get("価格（税別）") or ""
+    it.price = price_digits(price_text)
+    if it.price:
+        it.currency = "JPY"
+    it.release = month_of(specs.get("発売時期") or specs.get("発売日") or "") or it.release
+    spec = specs.get("仕様") or ""
+    size = re.search(r"(?:全高|全長|高さ|サイズ)[：:]?\s*約?\s*[\d.]+\s*(?:mm|cm)", spec)
+    it.size = size.group(0) if size else ""
+    scale = re.search(r"1/\d+", spec + " " + it.name)
+    it.scale = scale.group(0) if scale else ("ノンスケール" if "ノンスケール" in spec + it.category else "")
+    it.sculptor = specs.get("原型制作") or specs.get("原型") or ""
+    it.painter = specs.get("彩色") or specs.get("彩色制作") or ""
+    jan = clean(specs.get("JANコード", ""))
+    if re.fullmatch(r"\d{8,14}", jan):
+        it.jan = jan
+    text = clean(soup.get_text(" "))
+    window = re.search(r"予約期間\s*(20\d{2}年\d{1,2}月\d{1,2}日)[^～〜\-]{0,20}[～〜\-]\s*(20\d{2}年\d{1,2}月\d{1,2}日)", text)
+    if window:
+        it.preorder_start = parse_ymd(window.group(1))
+        it.preorder_end = parse_ymd(window.group(2))
+    bonus = re.search(r"予約特典[：:]\s*([^・※\n]{2,60})", text)
+    if bonus:
+        it.bonus = clean(bonus.group(1))
+    tags = ["预订中"]
+    if "再販" in it.name:
+        tags.append("再贩")
+    if "限定" in it.name or "スペシャルセット" in it.name or "限定販売" in text[:3000]:
+        tags.append("官网限定")
+    if it.bonus or "特典" in it.name:
+        tags.append("附特典")
+    it.status = " · ".join(dict.fromkeys(tags))
+    if spec:
+        it.extra = f"仕様：{spec}"
+    it.image_url = og_image(soup, KDCOLLE_BASE) or norm_img_url(it.thumb_src, KDCOLLE_BASE)
+
+
+# --------------------------------------------------------------------------
+# Hobby-Genki (hobby-genki.com): Japanese export shop on PrestaShop.
+
+GENKI_BASE = "https://hobby-genki.com/"
+GENKI_LIST = "https://hobby-genki.com/en/12-figures?order=product.date_add.desc"
+
+
+def hobbygenki_list(html: str) -> list[Item]:
+    soup = BeautifulSoup(html, "html.parser")
+    items, seen = [], set()
+    for card in soup.select("article.product-miniature"):
+        pid = clean(card.get("data-id-product", ""))
+        link = card.select_one("h2 a[href], h3 a[href], .product-title a[href], a.product-thumbnail[href]")
+        if not link:
+            continue
+        href = urljoin(GENKI_BASE, link["href"])
+        if not pid:
+            m = re.search(r"/(\d+)-[^/]+\.html", href)
+            pid = m.group(1) if m else ""
+        if not pid or pid in seen:
+            continue
+        seen.add(pid)
+        title_el = card.select_one("h2, h3, .product-title")
+        name = clean(title_el.get_text(" ")) if title_el else clean(link.get_text(" "))
+        img = card.find("img")
+        thumb = norm_img_url((img.get("data-full-size-image-url") or img.get("src") or "") if img else "", GENKI_BASE)
+        price_el = card.select_one(".price")
+        price = price_digits(price_el.get_text()) if price_el else ""
+        items.append(Item(
+            source="HobbyGenki", id=pid, url=href, name=name,
+            price=price, currency="JPY" if price else "",
+            thumb_src=thumb,
+        ))
+        if len(items) >= 18:
+            break
+    return items
+
+
+def hobbygenki_detail(html: str, it: Item) -> None:
+    soup = BeautifulSoup(html, "html.parser")
+    pd = soup.select_one("#product-details")
+    data = {}
+    if pd and pd.get("data-product"):
+        try:
+            data = json.loads(pd["data-product"])
+        except ValueError:
+            data = {}
+    if data:
+        it.name = clean(data.get("name")) or it.name
+        amt = data.get("price_amount")
+        if isinstance(amt, (int, float)) and amt > 0:
+            it.price = str(round(amt))
+            cur = soup.select_one("meta[itemprop='priceCurrency']")
+            it.currency = currency_of(cur["content"] if cur and cur.get("content") else "", str(data.get("price", ""))) or "JPY"
+        for code_key in ("reference", "ean13"):
+            code = clean(str(data.get(code_key) or ""))
+            if re.fullmatch(r"\d{8,14}", code):
+                it.jan = code
+                break
+        avail_date = clean(str(data.get("available_date") or ""))
+        if re.match(r"20\d{2}-\d{2}", avail_date):
+            it.release = avail_date[:7]
+        cat_name = clean(str(data.get("category_name") or ""))
+        maker_name = clean(str(data.get("manufacturer_name") or ""))
+        if maker_name:
+            it.maker = maker_name
+        elif cat_name and cat_name.lower() not in ("hobby", "figures", "scale figures", "pre-orders"):
+            it.maker = cat_name
+        cover = data.get("cover") or {}
+        if isinstance(cover, dict):
+            large = (cover.get("large") or {}).get("url") or (cover.get("bySize", {}).get("large_default") or {}).get("url")
+            if large:
+                it.image_url = norm_img_url(large, GENKI_BASE)
+    if not it.image_url:
+        it.image_url = og_image(soup, GENKI_BASE) or norm_img_url(it.thumb_src, GENKI_BASE)
+    desc = soup.select_one("#description, .product-description")
+    dtxt = clean(desc.get_text(" ")) if desc else ""
+    if not it.maker:
+        m = re.search(r"\[([A-Za-z0-9 &.'+-]{2,40})\]", dtxt[:220])
+        if m:
+            it.maker = clean(m.group(1))
+    scale = re.search(r"(?<![\d/])1/\d+(?!\d)", it.name)
+    if scale:
+        it.scale = scale.group(0)
+    tags = []
+    if it.release and it.release >= datetime.now(BEIJING).strftime("%Y-%m"):
+        tags.append("预订中")
+    elif "pre-order" in (dtxt[:400] + " " + clean(soup.get_text(" ")[:2000])).lower():
+        tags.append("预订中")
+    else:
+        tags.append("现货")
+    if re.search(r"re-?issue|re-?release|re-?run", it.name, re.I):
+        tags.append("再贩")
+    if re.search(r"limited|exclusive", it.name, re.I):
+        tags.append("官网限定")
+    if re.search(r"bonus", it.name, re.I):
+        tags.append("附特典")
+    it.status = " · ".join(dict.fromkeys(tags))
+    if has_adult_hint(it.name + " " + dtxt[:400]):
+        it.adult = "1"
+
+
+# --------------------------------------------------------------------------
+# Nin-Nin-Game (www.nin-nin-game.com): Japanese export shop on PrestaShop.
+# Note: robots.txt disallows ?p= and ?order= query parameters, so only clean
+# category URLs are fetched.
+
+NIN_BASE = "https://www.nin-nin-game.com/"
+NIN_LIST = "https://www.nin-nin-game.com/en/figures"
+
+
+def ninningame_list(html: str) -> list[Item]:
+    soup = BeautifulSoup(html, "html.parser")
+    items, seen = [], set()
+    for card in soup.select(".product-container, .ajax_block_product, li.ajax_block_product"):
+        link = card.select_one("a.product-name[href], a[title][href$='.html']")
+        if not link:
+            continue
+        href = urljoin(NIN_BASE, link["href"])
+        m = re.search(r"/(\d+)-[^/]+\.html$", href)
+        if not m or m.group(1) in seen:
+            continue
+        name = clean(link.get("title") or link.get_text(" "))
+        if re.search(r"2nd\s*hand|used|pre-?owned", name, re.I):
+            continue
+        seen.add(m.group(1))
+        img = card.find("img")
+        thumb = norm_img_url((img.get("data-original") or img.get("data-src") or img.get("src") or "") if img else "", NIN_BASE)
+        items.append(Item(
+            source="NinNinGame", id=m.group(1), url=href, name=name, thumb_src=thumb,
+        ))
+        if len(items) >= 20:
+            break
+    return items
+
+
+def ninningame_detail(html: str, it: Item) -> None:
+    soup = BeautifulSoup(html, "html.parser")
+    prod = ld_product(soup)
+    if prod:
+        it.name = clean(prod.get("name")) or it.name
+        it.maker = name_of(prod.get("brand")) or it.maker
+        code = clean(str(prod.get("gtin13") or prod.get("gtin") or prod.get("sku") or ""))
+        if re.fullmatch(r"\d{8,14}", code):
+            it.jan = code
+        image = first(prod.get("image"))
+        if isinstance(image, str):
+            it.image_url = norm_img_url(image, NIN_BASE)
+        offer = first(prod.get("offers")) or {}
+        raw_price = re.search(r"\d+(?:\.\d+)?", str(offer.get("price") or "").replace(",", ""))
+        if raw_price:
+            it.price = str(round(float(raw_price.group(0))))
+            it.currency = currency_of(offer.get("priceCurrency")) or "USD"
+    if not it.image_url:
+        it.image_url = og_image(soup, NIN_BASE) or norm_img_url(it.thumb_src, NIN_BASE)
+    text = clean(soup.get_text(" "))
+    rel = re.search(r"Release Date\s*[:：]\s*(20\d{2}[/-]\d{1,2}(?:[/-]\d{1,2})?|[A-Za-z]{3,9}\.?\s+20\d{2})", text, re.I)
+    if rel:
+        it.release = month_of(rel.group(1))
+    series = re.search(
+        r"Series\s*[:：]\s*([^|•\n]{2,60}?)(?:\s+(?:Character|Manufacturer|Japanese Original|Brand New|Release Date|Category|Details)\b|$)",
+        text,
+    )
+    if series:
+        it.series = clean(series.group(1))
+    char = re.search(
+        r"Character\s*[:：]\s*([^|•\n]{2,60}?)(?:\s+(?:Manufacturer|Series|Japanese Original|Brand New|Release Date|Category|Details)\b|$)",
+        text,
+    )
+    if char:
+        it.character = clean(char.group(1))
+    if not it.maker:
+        mk = re.search(r"\[([A-Za-z0-9 &.'+-]{2,40})\]\s*$", it.name)
+        if mk:
+            it.maker = clean(mk.group(1))
+    scale = re.search(r"(?<![\d/])1/\d+(?!\d)", it.name)
+    if scale:
+        it.scale = scale.group(0)
+    tags = []
+    if re.search(r"PRE-?ORDER", text[:3000], re.I):
+        tags.append("预订中")
+    else:
+        tags.append("现货")
+    if re.search(r"re-?issue|re-?release|re-?run", it.name, re.I):
+        tags.append("再贩")
+    if re.search(r"limited|exclusive", it.name + " " + text[:2500], re.I):
+        tags.append("官网限定")
+    if re.search(r"bonus", it.name, re.I):
+        tags.append("附特典")
+    it.status = " · ".join(dict.fromkeys(tags))
+    if has_adult_hint(it.name + " " + text[:2000]):
+        it.adult = "1"
+
+
+# --------------------------------------------------------------------------
+# Figuya (figuya.com): European specialist anime figure shop.
+
+FIGUYA_BASE = "https://figuya.com/"
+FIGUYA_LIST = "https://figuya.com/en/figures?sort=newest"
+
+
+def figuya_list(html: str) -> list[Item]:
+    soup = BeautifulSoup(html, "html.parser")
+    items, seen = [], set()
+    for a in soup.select("a[href*='/en/products/']"):
+        img = a.find("img")
+        if not img:
+            continue
+        href = urljoin(FIGUYA_BASE, a["href"].split("?", 1)[0])
+        slug = href.rstrip("/").rsplit("/", 1)[-1]
+        if not slug or slug in seen:
+            continue
+        seen.add(slug)
+        thumb = norm_img_url(img.get("src") or img.get("data-src") or "", FIGUYA_BASE)
+        items.append(Item(
+            source="Figuya", id=slug, url=href,
+            name=clean(img.get("alt") or a.get_text(" ")),
+            thumb_src=thumb,
+        ))
+        if len(items) >= 16:
+            break
+    return items
+
+
+def figuya_detail(html: str, it: Item) -> None:
+    soup = BeautifulSoup(html, "html.parser")
+    prod = ld_product(soup)
+    specs = label_pairs(soup)
+    if prod:
+        it.name = clean(prod.get("name")) or it.name
+        it.maker = name_of(prod.get("brand")) or it.maker
+        code = clean(str(prod.get("gtin13") or prod.get("gtin") or ""))
+        if re.fullmatch(r"\d{8,14}", code):
+            it.jan = code
+        image = first(prod.get("image"))
+        if isinstance(image, str):
+            it.image_url = norm_img_url(image, FIGUYA_BASE)
+        offer = first(prod.get("offers")) or {}
+        raw_price = re.search(r"\d+(?:\.\d+)?", str(offer.get("price") or "").replace(",", ""))
+        if raw_price:
+            it.price = str(round(float(raw_price.group(0))))
+            it.currency = currency_of(offer.get("priceCurrency")) or "EUR"
+        avail = str(offer.get("availability") or "")
+        tags = ["预订中"] if "PreOrder" in avail else ["现货"] if "InStock" in avail else []
+    else:
+        tags = []
+    if not it.image_url:
+        it.image_url = og_image(soup, FIGUYA_BASE) or norm_img_url(it.thumb_src, FIGUYA_BASE)
+    it.maker = specs.get("Manufacturer") or it.maker
+    part_of = specs.get("Part of") or ""
+    if part_of.lower() not in ("anime & manga", "gaming", "film & tv", "movies & tv", "comics", "other"):
+        it.series = part_of
+    raw_shows = re.sub(r"\s+\d+\s+to order.*$", "", specs.get("Shows") or "").strip()
+    m_show = re.match(r"(.+?)\s*\(([^)]+)\)\s*$", raw_shows)
+    if m_show:
+        it.character = clean(m_show.group(1))
+        if not it.series:
+            it.series = clean(m_show.group(2))
+    else:
+        it.character = raw_shows
+    if not it.jan and re.fullmatch(r"\d{8,14}", specs.get("EAN", "")):
+        it.jan = specs["EAN"]
+    rel_raw = specs.get("Release date") or ""
+    it.release = "" if rel_raw.strip().lower() == "released" else (month_of(rel_raw) or it.release)
+    it.size = specs.get("Size") or ""
+    it.material = specs.get("Material") or ""
+    it.sculptor = specs.get("Sculpted by") or ""
+    scale_src = specs.get("Scale") or it.name
+    scale = re.search(r"1/\d+", scale_src)
+    it.scale = scale.group(0) if scale else ("无比例" if "non-scale" in scale_src.lower() else "")
+    if re.search(r"re-?release|re-?issue|re-?run", it.name + " " + it.url, re.I):
+        tags.append("再贩")
+    if re.search(r"limited|exclusive", it.name, re.I):
+        tags.append("官网限定")
+    if re.search(r"bonus", it.name, re.I):
+        tags.append("附特典")
+    it.status = " · ".join(dict.fromkeys(tags))
+    if has_adult_hint(it.name + " " + specs.get("Category", "") + " " + specs.get("Age rating", "")):
+        it.adult = "1"
 
 
 # --------------------------------------------------------------------------
@@ -837,11 +1492,18 @@ SOURCE_DEFS = [
            + [[f"{HPOI_BASE}hobby/all?order=add&category={c}&{HPOI_ADULT_FILTER}"] for c in HPOI_CATEGORIES],
            hpoi_list, hpoi_detail, newest_first=True),
     Source("GoodSmile", [[GSC_HOME]], gsc_list, gsc_detail, newest_first=False),
+    Source("Native", NATIVE_FEEDS, native_list, native_detail, newest_first=True),
+    Source("MegaHobby", [[MH_LIST]], megahobby_list, megahobby_detail, newest_first=True),
+    Source("KDcolle", [[KDCOLLE_LIST]], kdcolle_list, kdcolle_detail, newest_first=True),
+    Source("TokyoFigure", [[TF_LIST]], tokyofigure_list, tokyofigure_detail, newest_first=True),
     Source("HLJ", [[HLJ_SEARCH.format(page=p) for p in (1, 2, 3, 4)]], hlj_list, hlj_detail,
            newest_first=False, total_of=hlj_total),
     Source("Sofmap", [[SOFMAP_LIST.format(page=p) for p in (1, 2)]], sofmap_list, sofmap_detail, newest_first=True,
            details=False),
+    Source("HobbyGenki", [[GENKI_LIST]], hobbygenki_list, hobbygenki_detail, newest_first=True),
+    Source("NinNinGame", [[NIN_LIST]], ninningame_list, ninningame_detail, newest_first=True),
     Source("Solaris", [[SOLARIS_LIST.format(page=p) for p in (1, 2)]], solaris_list, solaris_detail, newest_first=True),
+    Source("Figuya", [[FIGUYA_LIST]], figuya_list, figuya_detail, newest_first=True),
 ]
 
 
@@ -890,9 +1552,12 @@ def save_thumb(fetcher: Fetcher, it: Item) -> None:
     """
     dest = thumb_file(it.source, it.id)
     if not dest.exists():
-        for url in dict.fromkeys(u for u in (it.image_url, it.thumb_src) if u):
+        parts = urlparse(it.url)
+        referer = f"{parts.scheme}://{parts.netloc}/" if parts.scheme and parts.netloc else None
+        urls = [norm_img_url(u) for u in (it.image_url, it.thumb_src) if u]
+        for url in dict.fromkeys(u for u in urls if u):
             try:
-                img = Image.open(io.BytesIO(fetcher.image(url)))
+                img = Image.open(io.BytesIO(fetcher.image(url, referer=referer)))
                 if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
                     rgba = img.convert("RGBA")
                     img = Image.new("RGB", rgba.size, "white")
@@ -901,6 +1566,8 @@ def save_thumb(fetcher: Fetcher, it: Item) -> None:
                 img.thumbnail(THUMB_BOX, Image.Resampling.LANCZOS)
                 dest.parent.mkdir(parents=True, exist_ok=True)
                 img.save(dest, "WEBP", quality=THUMB_QUALITY, method=6)
+                if not it.image_url:
+                    it.image_url = url
                 break
             except Exception as exc:  # a missing thumbnail is not worth failing the item over
                 log(f"   thumbnail {it.source} {it.id}: {type(exc).__name__}: {exc}")
@@ -963,6 +1630,8 @@ def run_source(src: Source, fetcher: Fetcher, known: set[tuple[str, str]], today
             it.stats_date = today.isoformat()
             if is_backfill(it.release, today):
                 it.status = BACKFILL
+        if not it.image_url and it.thumb_src:
+            it.image_url = norm_img_url(it.thumb_src)
         save_thumb(fetcher, it)
         it.first_seen = today.isoformat()
         done.append(it)
@@ -1056,7 +1725,7 @@ def md(text: str) -> str:
     return re.sub(r"([\\|\[\]*_`])", r"\\\1", text)
 
 
-CURRENCY_LABEL = {"JPY": "日元", "CNY": "元", "USD": "美元"}
+CURRENCY_LABEL = {"JPY": "日元", "CNY": "元", "USD": "美元", "EUR": "欧元"}
 
 
 def item_cell(r: dict[str, str]) -> str:
@@ -1118,8 +1787,9 @@ def render_day(day: str, rows: list[dict[str, str]]) -> str:
 def render_readme(rows: list[dict[str, str]], last_run: dict) -> str:
     counts = Counter(r["first_seen"] for r in rows if r["first_seen"])
     days = sorted(counts, reverse=True)
+    source_names = "、".join(SOURCES.values())
     out = ["# figure-news 手办新品日报", "",
-           "每天清晨（北京时间）自动抓一次 HPOI、Good Smile 官网、HLJ、Sofmap、Solaris Japan 的新品，按天汇总成表。", ""]
+           f"每天清晨（北京时间）自动抓一次 {source_names} 共 {len(SOURCES)} 个网站的新品和商品图片，按天汇总成表。", ""]
     if days:
         out += [f"**最新一期：[{days[0]}](daily/{days[0]}.md)（{counts[days[0]]} 件）**", ""]
     out += [f"**公开网页：[{PAGES_URL}]({PAGES_URL})**（GitHub Pages，每天抓取后自动更新，最近 30 天）", "",
@@ -1148,8 +1818,8 @@ def render_readme(rows: list[dict[str, str]], last_run: dict) -> str:
         "| name / name_alt | 名称 / 日文原名（HPOI 提供） |",
         "| maker / series / character | 厂商 / 作品 / 角色 |",
         "| category / scale | 类型、产品线 / 比例 |",
-        "| price / currency / price_note | 价格 / 币种（Solaris Japan 是美元）/ 备注（如 HPOI 的人民币参考价） |",
-        "| release | 发售（出货）月份。Good Smile 官网只给再贩商品写，新品的月份来自 HLJ 或 HPOI 的同款 |",
+        "| price / currency / price_note | 价格 / 币种（日元、美元、欧元、人民币）/ 备注（如 HPOI 的人民币参考价） |",
+        "| release | 发售（出货）月份。Good Smile 官网只给再贩商品写，新品的月份来自其他同款来源 |",
         "| preorder_start / preorder_end | 预订开始 / 截止 |",
         "| status | 预订中、预订已满、现货、再贩、官网限定、旧品补录等 |",
         "| rating / adult | HPOI 的观感等级 / 成人向标记（1 = 是） |",
@@ -1174,17 +1844,15 @@ def render_readme(rows: list[dict[str, str]], last_run: dict) -> str:
         "Animate、Joshin、Tokyo Otaku Mode 直接拒绝程序访问；电击 Hobby 的 robots.txt 不允许抓取；"
         "CDJapan 不允许抓搜索页和图片。",
         "", "## 成人向", "",
-        "HPOI 里观感成熟的条目和原站一样照常收录、照常显示封面，只多一个「成人向」标记，"
-        "网页的「筛选」里可以把它们关掉。"
-        "HLJ 的成人向商品要登录并通过年龄验证才会显示，匿名访问看不到，所以没有收录。"
-        "Solaris Japan 标为 NSFW 的商品，原站要点一下才显示图片，这里只记文字和链接，不保存图片。",
+        "所有来源（包括 HPOI 观感成熟、Solaris Japan 标为 NSFW、Native 18+ 等）均照常收录并抓取商品封面图，同时标注「成人向」标签，"
+        "网页的「筛选」里可以一键开关隐藏。HLJ 的成人向商品需要登录并通过年龄验证才可见，匿名访问不展示。",
         "", "_本文件由 scrape.py 自动生成，手动修改会在下次运行时被覆盖。_", "",
     ]
     return "\n".join(out)
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Collect new figures from HPOI, Good Smile, HLJ, Sofmap and Solaris Japan.")
+    parser = argparse.ArgumentParser(description="Collect new figures and thumbnails from 12 figure websites.")
     parser.add_argument("--refresh-days", type=int, default=0, metavar="N",
                         help="also re-read the detail page of every item first seen in the last N days")
     args = parser.parse_args()
@@ -1219,6 +1887,8 @@ def main() -> int:
             return False
         if args.refresh_days:
             return 0 <= age_days(row, today) < args.refresh_days
+        if not row["thumb"] and not row["image_url"] and 0 <= age_days(row, today) <= 30:
+            return True
         if row["source"] == "GoodSmile":
             # A rerun's page says when it ships. Rows without that month are read again during their
             # first week: it fills in rows saved before the month was parsed, and late additions.

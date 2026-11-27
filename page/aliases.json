@@ -176,7 +176,21 @@
     "CAPCOM": ["カプコン", "capcom"],
     "Insight": ["insight"],
     "Daiki Kogyo": ["ダイキ工業", "daiki kougyou", "daiki"],
-    "Hobbymax": ["hobby max", "hobbymax", "ホビーマックス"]
+    "Hobbymax": ["hobby max", "hobbymax", "ホビーマックス"],
+    "KADOKAWA": ["角川", "kadokawa", "kdcolle", "kdcolle（kadokawaコレクション）"],
+    "Native": ["ネイティブ", "native"],
+    "BINDing": ["バインディング", "binding"],
+    "FROG": ["フロッグ", "frog"],
+    "Rocket Boy": ["ロケットボーイ", "rocket boy"],
+    "Second Axe": ["セカンドアックス", "second axe"],
+    "Stronger": ["ストロンガー", "stronger"],
+    "Knead": ["ニード", "knead"],
+    "Reverse Studio": ["リバーススタジオ", "reverse studio"],
+    "GoldenHead": ["ゴールデンヘッド", "goldenhead", "golden head", "goldenhead+"],
+    "PinkMango": ["ピンクマンゴー", "pinkmango", "pink mango"],
+    "Ques Q": ["キューズq", "ques q", "quesq"],
+    "Flare": ["フレア", "flare"],
+    "BellFine": ["ベルファイン", "bellfine", "bell fine"]
   },
   "line": {
     "ねんどろいど": "粘土人",

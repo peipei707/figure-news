@@ -7,14 +7,21 @@
   const SOURCES = {
     HPOI: { name: "HPOI", short: "HPOI" },
     GoodSmile: { name: "Good Smile 官网", short: "GSC" },
-    HLJ: { name: "HLJ", short: "HLJ" },
+    Native: { name: "Native 官网", short: "Native" },
+    MegaHobby: { name: "MegaHouse 官网", short: "MH" },
+    KDcolle: { name: "KDcolle 官网", short: "KDcolle" },
+    TokyoFigure: { name: "Tokyo Figure", short: "TF" },
     Sofmap: { name: "Sofmap", short: "Sofmap" },
+    HLJ: { name: "HLJ", short: "HLJ" },
+    HobbyGenki: { name: "Hobby-Genki", short: "Genki" },
+    NinNinGame: { name: "Nin-Nin-Game", short: "NinNin" },
     Solaris: { name: "Solaris Japan", short: "Solaris" },
+    Figuya: { name: "Figuya", short: "Figuya" },
   };
   const FLAGS = { pre: "可预订", re: "再贩", ltd: "官网限定", bonus: "附特典", mto: "受注生产", fav: "已收藏" };
   const QUICK_FLAGS = ["pre", "re", "ltd", "bonus"];
   const TAGS = { adult: "成人向", re: "再贩", ltd: "限定", bonus: "特典", mto: "受注", old: "旧品" };
-  const UNIT = { JPY: "日元", USD: "美元", CNY: "元" };
+  const UNIT = { JPY: "日元", USD: "美元", EUR: "欧元", CNY: "元" };
   // Bands are in renminbi, the one figure every priced item has.
   const BANDS = [
     ["a", "¥200 以下", 0, 200], ["b", "¥200–500", 200, 500], ["c", "¥500–1000", 500, 1000],
@@ -330,8 +337,7 @@
       box.append(img);
     } else {
       box.classList.add("none");
-      // Solaris Japan keeps its NSFW pictures behind a click, so none is saved for those.
-      box.append(el("span", null, small ? "无图" : it.adult ? "图片见原站" : "暂无图片"));
+      box.append(el("span", null, small ? "无图" : "暂无图片"));
     }
     return box;
   }
@@ -762,7 +768,7 @@
       row.append(text, input);
       show.append(row);
     };
-    sw("adult", "成人向条目", "HPOI 标为「观感成熟」、Solaris Japan 标为 NSFW 的条目");
+    sw("adult", "成人向条目", "HPOI 观感成熟、Solaris Japan NSFW、Native 18+ 等成人向条目");
     sw("old", "旧品补录", "HPOI 新建、但早已发售的老商品");
     body.append(show);
 
@@ -843,7 +849,7 @@
       const [title, text] = filtered ? ["没有符合条件的商品", "换个关键词，或者清除筛选。"]
         : !items.length ? ["还没有数据", "第一次抓取完成后会出现在这里。"]
         : state.tab === "fav" ? ["还没有收藏", "点商品右上角的心形收藏，之后在这里看它们的价格和截订时间。收藏只保存在这台设备的浏览器里。"]
-        : state.tab === "due" ? ["近期没有截订或开订的商品", "预订截止日来自 Good Smile 官网，开订日来自 HPOI 的进程。"]
+        : state.tab === "due" ? ["近期没有截订或开订的商品", "预订截止日来自 Good Smile、Native、Tokyo Figure、KDcolle 等官网，开订日来自 HPOI 的进程。"]
         : ["这一天没有可显示的商品", "成人向和旧品补录可以在「筛选」里打开。"];
       $("empty-title").textContent = title;
       $("empty-text").textContent = text;
@@ -1106,8 +1112,8 @@
       $("fresh").title = bad ? `有 ${bad} 个来源这次没抓到，详见页面底部`
         : late ? "每天清晨抓取一次（北京时间）；GitHub 的定时任务有时会晚几个小时" : "各个来源都抓取正常（北京时间）";
     }
-    $("rate-note").textContent = `页面上的 ¥ 一律指人民币，日元、美元价格写作「日元」「美元」。约合价按 1 日元 ≈ ${RATE} 元估算`
-      + `（取自 HPOI 近期标注的中位数），HPOI 自己标了人民币参考价的直接用它的；美元按 1 美元 ≈ ${Number(DATA.usd) || 7.1} 元粗算。`;
+    $("rate-note").textContent = `页面上的 ¥ 一律指人民币，外币价格写作「日元」「美元」「欧元」。约合价按 1 日元 ≈ ${RATE} 元估算`
+      + `（取自 HPOI 近期标注的中位数），HPOI 自己标了人民币参考价的直接用它的；美元按 1 美元 ≈ ${Number(DATA.usd) || 7.1} 元、欧元按 1 欧元 ≈ ${Number(DATA.eur) || 7.8} 元粗算。`;
     $("brand-sub").textContent = `每天汇总 ${Object.keys(SOURCES).length} 个来源的新品`;
   }
   const THEMES = { auto: ["auto", "外观：跟随系统"], light: ["sun", "外观：浅色"], dark: ["moon", "外观：深色"] };

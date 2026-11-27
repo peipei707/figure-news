@@ -45,18 +45,39 @@ OUT = ROOT / "build"
 DAYS = 30
 BEIJING = timezone(timedelta(hours=8))
 FALLBACK_JPY_TO_CNY = 0.047
-USD_TO_CNY = 7.1  # a fixed, rough figure: only Solaris Japan prices in dollars, and the page marks it as an estimate
+USD_TO_CNY = 7.1  # a fixed, rough figure: Solaris Japan and Nin-Nin-Game price in dollars, marked as an estimate
+EUR_TO_CNY = 7.8  # a fixed, rough figure: Figuya prices in euros, marked as an estimate
 BACKFILL = "旧品补录"
 TILE = 3 / 4  # the page's picture tiles, width over height: product shots are mostly upright
 
-# Whose wording wins when sources disagree: HPOI writes Chinese, Good Smile is
-# the maker's own Japanese listing, Sofmap a Japanese shop's, HLJ and Solaris
-# Japan are English shop listings.
-SOURCES = ["HPOI", "GoodSmile", "Sofmap", "HLJ", "Solaris"]
-PRICE_FROM = ["GoodSmile", "HPOI", "Sofmap", "HLJ", "Solaris"]  # the official price before a shop's
-IMAGE_FROM = ["GoodSmile", "HPOI", "Sofmap", "Solaris", "HLJ"]
+# Whose wording wins when sources disagree: HPOI writes Chinese, official Japanese
+# makers and Japanese shops next, then international English/European shops.
+SOURCES = [
+    "HPOI", "GoodSmile", "Native", "MegaHobby", "KDcolle", "TokyoFigure",
+    "Sofmap", "HLJ", "HobbyGenki", "NinNinGame", "Solaris", "Figuya",
+]
+PRICE_FROM = [
+    "GoodSmile", "Native", "MegaHobby", "KDcolle", "TokyoFigure",
+    "HPOI", "Sofmap", "HLJ", "HobbyGenki", "NinNinGame", "Solaris", "Figuya",
+]  # official price before a shop's
+IMAGE_FROM = [
+    "GoodSmile", "Native", "KDcolle", "MegaHobby", "TokyoFigure",
+    "HPOI", "Sofmap", "Figuya", "HobbyGenki", "NinNinGame", "Solaris", "HLJ",
+]
 # What each shop's price means, shown beside it.
-PRICE_NOTE = {"GoodSmile": "含税", "Sofmap": "含税", "HLJ": "不含日本消费税", "Solaris": "美元价，预订期优惠价"}
+PRICE_NOTE = {
+    "GoodSmile": "含税",
+    "Native": "含税",
+    "MegaHobby": "含税",
+    "KDcolle": "含税",
+    "TokyoFigure": "含税",
+    "Sofmap": "含税",
+    "HLJ": "不含日本消费税",
+    "HobbyGenki": "日元店价",
+    "NinNinGame": "美元参考价",
+    "Solaris": "美元价，预订期优惠价",
+    "Figuya": "欧元含税价",
+}
 
 # Product types, in the order the page lists them.
 TYPES = {
@@ -163,6 +184,12 @@ def tidy_name(name: str, source: str, maker: str = "") -> str:
         if maker and name.endswith(")") and bare(maker) in bare(name.rsplit("(", 1)[-1]):
             name = name.rsplit("(", 1)[0].strip()
         name = re.sub(r"\s+-\s+1/\d+\s*$", "", name)
+    elif source in ("NinNinGame", "HobbyGenki"):
+        if maker and name.endswith("]") and bare(maker) in bare(name.rsplit("[", 1)[-1]):
+            name = name.rsplit("[", 1)[0].strip()
+    elif source == "Figuya":
+        if maker and " - " in name and bare(maker) == bare(name.rsplit(" - ", 1)[-1]):
+            name = name.rsplit(" - ", 1)[0].strip()
     return name
 
 
@@ -314,6 +341,8 @@ def cny_of(price: int | None, currency: str, note: str, rate: float) -> int | No
         return int(m.group(1).replace(",", ""))
     if currency == "USD":
         return round(price * USD_TO_CNY)
+    if currency == "EUR":
+        return round(price * EUR_TO_CNY)
     return round(price * rate) if currency == "JPY" else None
 
 
@@ -360,7 +389,7 @@ def group_rows(rows: list[dict[str, str]], aliases: Aliases) -> list[list[dict[s
             join(by_jan.setdefault(jan, i), i)
         name = bare(r["name_alt"] if r["source"] == "HPOI" else r["name"])
         maker = bare(aliases.maker_of(r["maker"]))
-        if r["source"] in ("HPOI", "GoodSmile") and len(name) >= 6 and maker:
+        if r["source"] in ("HPOI", "GoodSmile", "Native", "MegaHobby", "KDcolle", "TokyoFigure") and len(name) >= 6 and maker:
             join(by_name.setdefault((name, maker), i), i)
     groups: dict[int, list[dict[str, str]]] = {}
     for i, r in enumerate(rows):
@@ -390,7 +419,7 @@ def product_of(members: list[dict[str, str]], aliases: Aliases, rate: float) -> 
     maker = aliases.maker_of(makers[0]) if makers else ""
 
     categories = uniq(m["category"] for m in members)
-    spec = " ".join(m["extra"] for m in members if m["source"] == "GoodSmile")
+    spec = " ".join(m["extra"] for m in members if m["source"] in ("GoodSmile", "KDcolle", "Native"))
     size = first_of(members, "size")
     scale = next((s for s in (scale_of(m["scale"]) for m in members) if s), "") \
         or scale_of(spec) or scale_of(size, loose=False)
@@ -583,6 +612,7 @@ def build_data(rows: list[dict[str, str]], today: date, last_run: dict) -> dict:
     return {
         "rate": rate,
         "usd": USD_TO_CNY,
+        "eur": EUR_TO_CNY,
         "updated": last_run.get("time", ""),
         "runs": runs,
         "types": TYPES,
