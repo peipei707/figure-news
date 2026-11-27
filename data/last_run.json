@@ -1,30 +1,65 @@
 {
-  "time": "2026-11-27 09:49",
+  "time": "2026-11-27 19:17",
   "sources": {
     "HPOI": {
       "status": "ok",
-      "new": 9,
-      "note": ""
+      "new": 40,
+      "note": "还有 11 件留到下次"
     },
     "GoodSmile": {
       "status": "ok",
-      "new": 8,
+      "new": 15,
+      "note": ""
+    },
+    "Native": {
+      "status": "ok",
+      "new": 24,
+      "note": ""
+    },
+    "MegaHobby": {
+      "status": "ok",
+      "new": 11,
+      "note": ""
+    },
+    "KDcolle": {
+      "status": "ok",
+      "new": 20,
+      "note": ""
+    },
+    "TokyoFigure": {
+      "status": "ok",
+      "new": 20,
       "note": ""
     },
     "HLJ": {
       "status": "ok",
-      "new": 5,
+      "new": 15,
       "note": ""
     },
     "Sofmap": {
       "status": "ok",
-      "new": 13,
+      "new": 0,
+      "note": ""
+    },
+    "HobbyGenki": {
+      "status": "blocked",
+      "new": 0,
+      "note": "robots.txt 不允许抓取 https://hobby-genki.com/en/12-figures?order=product.date_add.desc"
+    },
+    "NinNinGame": {
+      "status": "ok",
+      "new": 20,
       "note": ""
     },
     "Solaris": {
       "status": "ok",
-      "new": 18,
+      "new": 27,
       "note": ""
+    },
+    "Figuya": {
+      "status": "blocked",
+      "new": 0,
+      "note": "robots.txt 不允许抓取 https://figuya.com/en/figures?sort=newest"
     }
   }
 }

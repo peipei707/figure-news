@@ -1,8 +1,8 @@
 # figure-news 手办新品日报
 
-每天清晨（北京时间）自动抓一次 HPOI、Good Smile 官网、HLJ、Sofmap、Solaris Japan 的新品，按天汇总成表。
+每天清晨（北京时间）自动抓一次 HPOI、Good Smile 官网、Native 官网、MegaHouse 官网、KDcolle 官网、Tokyo Figure、Sofmap、HLJ、Hobby-Genki、Nin-Nin-Game、Solaris Japan、Figuya 共 12 个网站的新品和商品图片，按天汇总成表。
 
-**最新一期：[2026-11-27](daily/2026-11-27.md)（53 件）**
+**最新一期：[2026-11-27](daily/2026-11-27.md)（245 件）**
 
 **公开网页：[https://peipei707.github.io/figure-news/](https://peipei707.github.io/figure-news/)**（GitHub Pages，每天抓取后自动更新，最近 30 天）
 
@@ -10,19 +10,26 @@
 
 ## 上次运行
 
-2026-11-27 09:49（北京时间）
+2026-11-27 19:17（北京时间）
 
 | 来源 | 结果 | 新增 | 备注 |
 |---|---|---|---|
-| HPOI | ✅ 正常 | 9 |  |
-| Good Smile 官网 | ✅ 正常 | 8 |  |
-| HLJ | ✅ 正常 | 5 |  |
-| Sofmap | ✅ 正常 | 13 |  |
-| Solaris Japan | ✅ 正常 | 18 |  |
+| HPOI | ✅ 正常 | 40 | 还有 11 件留到下次 |
+| Good Smile 官网 | ✅ 正常 | 15 |  |
+| Native 官网 | ✅ 正常 | 24 |  |
+| MegaHouse 官网 | ✅ 正常 | 11 |  |
+| KDcolle 官网 | ✅ 正常 | 20 |  |
+| Tokyo Figure | ✅ 正常 | 20 |  |
+| Sofmap | ✅ 正常 | 0 |  |
+| HLJ | ✅ 正常 | 15 |  |
+| Hobby-Genki | ⛔ 被网站拦截 | 0 | robots.txt 不允许抓取 https://hobby-genki.com/en/12-figures?order=product.date\_add.desc |
+| Nin-Nin-Game | ✅ 正常 | 20 |  |
+| Solaris Japan | ✅ 正常 | 27 |  |
+| Figuya | ⛔ 被网站拦截 | 0 | robots.txt 不允许抓取 https://figuya.com/en/figures?sort=newest |
 
 ## 最近 30 天
 
-- [2026-11-27](daily/2026-11-27.md) · 53 件
+- [2026-11-27](daily/2026-11-27.md) · 245 件
 - [2026-11-26](daily/2026-11-26.md) · 32 件
 - [2026-11-25](daily/2026-11-25.md) · 71 件
 - [2026-11-24](daily/2026-11-24.md) · 75 件
@@ -60,8 +67,8 @@
 | name / name_alt | 名称 / 日文原名（HPOI 提供） |
 | maker / series / character | 厂商 / 作品 / 角色 |
 | category / scale | 类型、产品线 / 比例 |
-| price / currency / price_note | 价格 / 币种（Solaris Japan 是美元）/ 备注（如 HPOI 的人民币参考价） |
-| release | 发售（出货）月份。Good Smile 官网只给再贩商品写，新品的月份来自 HLJ 或 HPOI 的同款 |
+| price / currency / price_note | 价格 / 币种（日元、美元、欧元、人民币）/ 备注（如 HPOI 的人民币参考价） |
+| release | 发售（出货）月份。Good Smile 官网只给再贩商品写，新品的月份来自其他同款来源 |
 | preorder_start / preorder_end | 预订开始 / 截止 |
 | status | 预订中、预订已满、现货、再贩、官网限定、旧品补录等 |
 | rating / adult | HPOI 的观感等级 / 成人向标记（1 = 是） |
@@ -89,6 +96,6 @@
 
 ## 成人向
 
-HPOI 里观感成熟的条目和原站一样照常收录、照常显示封面，只多一个「成人向」标记，网页的「筛选」里可以把它们关掉。HLJ 的成人向商品要登录并通过年龄验证才会显示，匿名访问看不到，所以没有收录。Solaris Japan 标为 NSFW 的商品，原站要点一下才显示图片，这里只记文字和链接，不保存图片。
+所有来源（包括 HPOI 观感成熟、Solaris Japan 标为 NSFW、Native 18+ 等）均照常收录并抓取商品封面图，同时标注「成人向」标签，网页的「筛选」里可以一键开关隐藏。HLJ 的成人向商品需要登录并通过年龄验证才可见，匿名访问不展示。
 
 _本文件由 scrape.py 自动生成，手动修改会在下次运行时被覆盖。_
