@@ -2,7 +2,7 @@
 
 每天清晨（北京时间）自动抓一次 HPOI、Good Smile 官网、Native 官网、MegaHouse 官网、KDcolle 官网、Tokyo Figure、Sofmap、HLJ、Hobby-Genki、Nin-Nin-Game、Solaris Japan、Figuya 共 12 个网站的新品和商品图片，按天汇总成表。
 
-**最新一期：[2026-11-27](daily/2026-11-27.md)（245 件）**
+**最新一期：[2026-11-27](daily/2026-11-27.md)（280 件）**
 
 **公开网页：[https://peipei707.github.io/figure-news/](https://peipei707.github.io/figure-news/)**（GitHub Pages，每天抓取后自动更新，最近 30 天）
 
@@ -10,26 +10,26 @@
 
 ## 上次运行
 
-2026-11-27 19:17（北京时间）
+2026-11-27 19:47（北京时间）
 
 | 来源 | 结果 | 新增 | 备注 |
 |---|---|---|---|
-| HPOI | ✅ 正常 | 40 | 还有 11 件留到下次 |
-| Good Smile 官网 | ✅ 正常 | 15 |  |
-| Native 官网 | ✅ 正常 | 24 |  |
-| MegaHouse 官网 | ✅ 正常 | 11 |  |
-| KDcolle 官网 | ✅ 正常 | 20 |  |
-| Tokyo Figure | ✅ 正常 | 20 |  |
+| HPOI | ✅ 正常 | 2 |  |
+| Good Smile 官网 | ✅ 正常 | 0 |  |
+| Native 官网 | ✅ 正常 | 0 |  |
+| MegaHouse 官网 | ✅ 正常 | 0 |  |
+| KDcolle 官网 | ✅ 正常 | 0 |  |
+| Tokyo Figure | ✅ 正常 | 0 |  |
 | Sofmap | ✅ 正常 | 0 |  |
-| HLJ | ✅ 正常 | 15 |  |
-| Hobby-Genki | ⛔ 被网站拦截 | 0 | robots.txt 不允许抓取 https://hobby-genki.com/en/12-figures?order=product.date\_add.desc |
-| Nin-Nin-Game | ✅ 正常 | 20 |  |
-| Solaris Japan | ✅ 正常 | 27 |  |
-| Figuya | ⛔ 被网站拦截 | 0 | robots.txt 不允许抓取 https://figuya.com/en/figures?sort=newest |
+| HLJ | ✅ 正常 | 0 |  |
+| Hobby-Genki | ✅ 正常 | 18 |  |
+| Nin-Nin-Game | ✅ 正常 | 6 |  |
+| Solaris Japan | ✅ 正常 | 0 |  |
+| Figuya | ✅ 正常 | 9 |  |
 
 ## 最近 30 天
 
-- [2026-11-27](daily/2026-11-27.md) · 245 件
+- [2026-11-27](daily/2026-11-27.md) · 280 件
 - [2026-11-26](daily/2026-11-26.md) · 32 件
 - [2026-11-25](daily/2026-11-25.md) · 71 件
 - [2026-11-24](daily/2026-11-24.md) · 75 件
