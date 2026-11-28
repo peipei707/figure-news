@@ -1588,21 +1588,27 @@ def ninningame_detail(html: str, it: Item) -> None:
         if raw_price:
             it.price = str(round(float(raw_price.group(0))))
             it.currency = currency_of(offer.get("priceCurrency")) or "USD"
-    # Full-resolution product gallery sits in #thumbs_list a[href]; for face-crop makers
-    # like Insight, ld+json's image ID is the store's safe face cutout cover, so drop that ID
-    # and pick the first full-body studio photo instead.
+    # Full-resolution product gallery sits in #thumbs_list a[href]. On +18 items (Native,
+    # Insight, etc.), Nin-Nin-Game often appends a cropped face cutout at the end of the gallery
+    # (ld_idx > 0) or puts one at index 0 for Insight, and marks it as ld+json's cover image.
+    # Drop that safe cover ID so cards always get the full-body studio photo.
     thumbs_gal = [norm_img_url(a.get("href", ""), NIN_BASE) for a in soup.select("#thumbs_list a[href]")]
     thumbs_gal = list(dict.fromkeys(u for u in thumbs_gal if u))
-    if is_face_crop_maker(it.maker, it.name) and len(thumbs_gal) >= 2:
+    if len(thumbs_gal) >= 2:
         ld_id_m = re.search(r"/(\d+)(?:-[^/]+)?/", ld_gal[0]) if ld_gal else None
         ld_id = ld_id_m.group(1) if ld_id_m else ""
-        full_gal = [u for u in thumbs_gal if not (ld_id and re.search(rf"/{re.escape(ld_id)}(?:-[^/]+)?/", u))]
-        chosen = full_gal or thumbs_gal
-        it.image_url = chosen[0]
-        it.gallery = join_gallery(chosen, limit=6)
+        ld_idx = next((i for i, u in enumerate(thumbs_gal) if ld_id and re.search(rf"/{re.escape(ld_id)}(?:-[^/]+)?/", u)), -1)
+        if ld_idx > 0 or (is_face_crop_maker(it.maker, it.name) and ld_id):
+            full_gal = [u for u in thumbs_gal if not (ld_id and re.search(rf"/{re.escape(ld_id)}(?:-[^/]+)?/", u))]
+            chosen = full_gal or thumbs_gal
+            it.image_url = chosen[0]
+            it.gallery = join_gallery(chosen, limit=6)
+        else:
+            it.image_url = ld_gal[0] if ld_gal else thumbs_gal[0]
+            it.gallery = join_gallery([it.image_url, *thumbs_gal], limit=6)
     elif thumbs_gal:
-        it.image_url = ld_gal[0] if ld_gal else thumbs_gal[0]
-        it.gallery = join_gallery([it.image_url, *thumbs_gal], limit=6)
+        it.image_url = thumbs_gal[0]
+        it.gallery = join_gallery(thumbs_gal, limit=6)
     elif ld_gal:
         it.image_url = ld_gal[0]
         it.gallery = join_gallery(ld_gal, limit=6)

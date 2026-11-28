@@ -25,6 +25,7 @@ deadline has not passed yet, so the deadline view stays complete.
 from __future__ import annotations
 
 import csv
+import hashlib
 import html
 import json
 import re
@@ -745,6 +746,8 @@ def main() -> None:
         dest.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / src, dest)
         item |= frame_of(dest)
+        digest = hashlib.md5(dest.read_bytes()).hexdigest()[:8]
+        item["img"] = f"{src}?v={digest}"
         copied += dest.stat().st_size
     static = PAGE / "static"
     if static.is_dir():
