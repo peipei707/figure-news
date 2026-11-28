@@ -26,6 +26,7 @@ import os
 import re
 import sys
 import time
+import xml.etree.ElementTree as ET
 from collections import Counter
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
@@ -84,6 +85,24 @@ def is_face_crop_maker(maker: str, name: str = "") -> bool:
     """Makers whose retail listings put a safe face-only cutout as photo #0 and full-body shots after it."""
     blob = f"{maker} {name}".lower()
     return "insight" in blob or any(w in blob for w in ("肉感少女", "肉感美少年", "nikkan shoujo", "nikukan"))
+
+
+APE_INSIGHT_FEED = "https://ape-insight.jp/feed/"
+APE_INSIGHT_SKIP_WORDS = (
+    "肉感美少年", "男の娘", "伪娘", "つるぺた", "貧乳", "贫乳", "ロリ", "萝莉",
+    "ガレージキット", "garage kit", "今週の新商品情報", "出荷", "フォトギャラリー", "お知らせ",
+)
+UNCENSORED_IMG_HOSTS = ("ape-insight.jp", "topgkstore.com")
+
+
+def is_uncensored_img_url(url: str) -> bool:
+    host = urlparse(url or "").netloc.lower()
+    return any(host == h or host.endswith("." + h) for h in UNCENSORED_IMG_HOSTS)
+
+
+def has_minor_risk_hint(text: str) -> bool:
+    low = (text or "").lower()
+    return any(w in low for w in ("肉感美少年", "男の娘", "伪娘", "つるぺた", "貧乳", "贫乳", "ロリ", "萝莉", "crossdressing", "noel-kun", "那个女孩的秘密", "あの娘の秘密"))
 
 SOURCES = {
     "HPOI": "HPOI",
@@ -2005,13 +2024,130 @@ def _shopify_full_images(fetcher: Fetcher, host: str, handle: str, maker_hint: s
     return imgs
 
 
+def ape_insight_post_images(body: str) -> list[str]:
+    """Extract full-resolution studio product JPGs from an ape-insight.jp post.
+
+    Insight names its full-body studio turnaround photos 011..015-*.jpg, promo scene
+    shots 000-*.jpg, and upper-body close-ups 010-*.jpg. Placing 011..015 first ensures
+    the primary card thumbnail is always a complete full-body shot without retail white dots.
+    """
+    raw = re.findall(r"https?://ape-insight\.jp/wp-content/uploads/[^\"'\s<>]+?\.jpe?g", body or "", re.I)
+    urls = []
+    seen: set[str] = set()
+    for u in raw:
+        u = re.sub(r"-\d+x\d+(?=\.jpe?g$)", "", u.split("?", 1)[0], flags=re.I).replace("http://", "https://")
+        fname = u.rsplit("/", 1)[-1].lower()
+        if any(fname.startswith(p) for p in ("blog-", "header-", "size", "siro", "set.", "gallery_")):
+            continue
+        if u not in seen:
+            seen.add(u)
+            urls.append(u)
+
+    def rank(u: str) -> tuple[int, int]:
+        fname = u.rsplit("/", 1)[-1].lower()
+        m = re.match(r"^(\d{3})(?:[-_.]|$)", fname)
+        num = int(m.group(1)) if m else 999
+        if 11 <= num <= 15:
+            return (0, num)
+        if num == 0:
+            return (1, num)
+        if 16 <= num <= 25:
+            return (2, num)
+        if num == 10:
+            return (3, num)
+        return (4, num)
+
+    return sorted(urls, key=rank)
+
+
+def enrich_insight_official(fetcher: Fetcher, rows: list[dict[str, str]], today: date) -> set[str]:
+    """Upgrade recent Insight / 肉感少女 rows with official uncensored studio photos from ape-insight.jp/feed/."""
+    targets = [
+        r for r in rows
+        if is_face_crop_maker(r.get("maker", ""), r.get("name", ""))
+        and not is_uncensored_img_url(r.get("image_url", ""))
+        and not has_minor_risk_hint(f"{r.get('name', '')} {r.get('name_alt', '')}")
+        and 0 <= age_days(r, today) <= 30
+    ]
+    if not targets:
+        return set()
+    try:
+        feed_xml = fetcher.text(APE_INSIGHT_FEED)
+        root = ET.fromstring(feed_xml.encode("utf-8"))
+    except (Blocked, ET.ParseError, Exception) as exc:
+        log(f"   ape-insight feed skipped: {type(exc).__name__}: {exc}")
+        return set()
+
+    ns = {"content": "http://purl.org/rss/1.0/modules/content/"}
+    posts: list[tuple[str, str, list[str]]] = []
+    for item in root.findall("./channel/item"):
+        title = clean(item.findtext("title"))
+        link = clean(item.findtext("link"))
+        if not link or "new-item_" not in link or re.search(r"new-item_20\d{2}-", link):
+            continue
+        if any(w in title.lower() for w in APE_INSIGHT_SKIP_WORDS):
+            continue
+        quoted = re.findall(r"「([^」]{2,24})」", title)
+        if len(quoted) != 1:
+            continue
+        body = item.findtext("content:encoded", "", ns) or ""
+        imgs = ape_insight_post_images(body)
+        if not imgs:
+            continue
+        slug = link.rstrip("/").rsplit("/", 1)[-1].lower()
+        slug = re.sub(r"^new-item_|_(?:1-\d+|2|garagekit.*)$", "", slug)
+        posts.append((quoted[0], slug, imgs))
+
+    if not posts:
+        return set()
+
+    def fold(s: str) -> str:
+        return re.sub(r"[\s・･\-_'\"()（）\[\]]+", "", (s or "").lower())
+
+    by_jan: dict[str, list[str]] = {}
+    matched_rows: list[tuple[dict[str, str], list[str]]] = []
+    for row in targets:
+        blob = fold(f"{row.get('name_alt', '')} {row.get('name', '')} {row.get('character', '')}")
+        imgs: list[str] = []
+        for char_jp, slug, post_imgs in posts:
+            c_key = fold(char_jp)
+            if len(c_key) >= 2 and c_key in blob:
+                imgs = post_imgs
+                break
+            s_toks = [t for t in re.findall(r"[a-z]{5,}", slug) if t not in ("nude", "garage", "parts")]
+            if s_toks and any(tok in blob for tok in s_toks):
+                imgs = post_imgs
+                break
+        if imgs:
+            matched_rows.append((row, imgs))
+            if re.fullmatch(r"\d{8,14}", row.get("jan", "")):
+                by_jan.setdefault(row["jan"], imgs)
+
+    # Propagate matched ape-insight photos to sibling rows sharing the same JAN.
+    matched_ids = {(r["source"], r["id"]) for r, _ in matched_rows}
+    for row in targets:
+        if (row["source"], row["id"]) not in matched_ids and row.get("jan") in by_jan:
+            matched_rows.append((row, by_jan[row["jan"]]))
+
+    redrawn: set[str] = set()
+    for row, imgs in matched_rows:
+        row["image_url"] = imgs[0]
+        row["gallery"] = join_gallery(imgs, limit=6)
+        it = Item(**{k: row.get(k, "") for k in CSV_FIELDS})
+        if save_thumb(fetcher, it, force=True):
+            row["thumb"] = it.thumb
+            redrawn.add(row["first_seen"])
+            log(f"   uncensored {row['source']} {row['id']} {row['name'][:38]} -> {imgs[0].rsplit('/', 1)[-1]}")
+    return redrawn
+
+
 def enrich_censored_hpoi(fetcher: Fetcher, rows: list[dict[str, str]], today: date,
                          max_lookups: int = 15) -> set[str]:
     """Replace HPOI's cropped /gk/cover/ thumbnails on mature/cautious items with full-body photos.
 
     1. Reuse full-body photos from any non-HPOI row in rows sharing the same JAN.
     2. Look up remaining JAN-bearing items on Solaris Japan (robots-allowed Shopify suggest API).
-    3. Look up remaining Chinese/indie studio items on open Shopify PVC stores with strict matching.
+    3. Look up remaining Chinese/indie studio items on open Shopify/WooCommerce PVC stores with strict matching.
     """
     donor_rank = ("Native", "GoodSmile", "KDcolle", "MegaHobby", "TokyoFigure",
                   "Solaris", "NinNinGame", "HobbyGenki", "Figuya", "Sofmap", "HLJ")
@@ -2019,14 +2155,17 @@ def enrich_censored_hpoi(fetcher: Fetcher, rows: list[dict[str, str]], today: da
     for src in donor_rank:
         for r in rows:
             if r["source"] == src and re.fullmatch(r"\d{8,14}", r["jan"]) and r["image_url"]:
-                donors_by_jan.setdefault(r["jan"], r)
+                if is_uncensored_img_url(r["image_url"]) or r["jan"] not in donors_by_jan:
+                    donors_by_jan[r["jan"]] = r
 
     stop_tokens = {"scale", "figure", "statue", "ver", "version", "studio", "pvc", "abs", "resin",
                    "limited", "edition", "original", "model", "licensed", "bonus", "regular", "deluxe"}
     redrawn: set[str] = set()
     lookups = 0
     targets = [r for r in sorted(rows, key=lambda r: r["first_seen"], reverse=True)
-               if is_censored_hpoi_row(r) and 0 <= age_days(r, today) <= 30]
+               if is_censored_hpoi_row(r)
+               and not has_minor_risk_hint(f"{r.get('name', '')} {r.get('name_alt', '')}")
+               and 0 <= age_days(r, today) <= 30]
     for row in targets:
         imgs: list[str] = []
         jan = row.get("jan", "")
@@ -2074,6 +2213,25 @@ def enrich_censored_hpoi(fetcher: Fetcher, rows: list[dict[str, str]], today: da
                         continue
                     except Exception as exc:
                         log(f"   enrich {host} {row['id']}: {type(exc).__name__}: {exc}")
+                if not imgs and lookups < max_lookups:
+                    lookups += 1
+                    try:
+                        raw = fetcher.text(f"https://topgkstore.com/wp-json/wc/store/v1/products?search={title_tokens[0]}&per_page=5")
+                        prods = json.loads(raw) if raw.strip().startswith("[") else []
+                        for p in prods:
+                            ptitle = clean(html_entities.unescape(p.get("name") or "")).lower()
+                            if q_maker.lower() not in ptitle:
+                                continue
+                            if scale and scale.startswith("1/") and re.search(r"1/\d+", ptitle) and scale not in ptitle:
+                                continue
+                            if any(tok in ptitle for tok in title_tokens):
+                                imgs = [norm_img_url(im.get("src", "")) for im in (p.get("images") or []) if isinstance(im, dict) and im.get("src")]
+                                if imgs:
+                                    break
+                    except Blocked:
+                        pass
+                    except Exception as exc:
+                        log(f"   enrich topgkstore {row['id']}: {type(exc).__name__}: {exc}")
         if imgs:
             row["image_url"] = imgs[0]
             row["gallery"] = join_gallery(imgs, limit=6)
@@ -2108,9 +2266,11 @@ def refresh_rows(fetcher: Fetcher, rows: list[dict[str, str]], pick: Callable[[d
         if row["source"] == "HPOI":
             it.stats_date = today.isoformat()
         fresh = it.row()
-        # Preserve an already-enriched full-body external image when HPOI itself only has /gk/cover/.
-        if (row["source"] == "HPOI" and prev_img and "/gk/cover/" not in prev_img
-                and "/gk/cover/" in fresh.get("image_url", "")):
+        # Preserve an already-enriched uncensored or full-body external image during stat refreshes.
+        if prev_img and (
+            is_uncensored_img_url(prev_img)
+            or (row["source"] == "HPOI" and "/gk/cover/" not in prev_img and "/gk/cover/" in fresh.get("image_url", ""))
+        ):
             fresh["image_url"] = prev_img
             fresh["gallery"] = row.get("gallery", "")
         for key in DETAIL_FIELDS:
@@ -2329,7 +2489,7 @@ def main() -> int:
     refreshed, refresh_days = refresh_rows(fetcher, rows, pick, today)
     log(f"   {refreshed} items re-read")
     log("== full-body enrich")
-    enriched_days = enrich_censored_hpoi(fetcher, rows, today)
+    enriched_days = enrich_insight_official(fetcher, rows, today) | enrich_censored_hpoi(fetcher, rows, today)
     log(f"   full-body pictures updated on {len(enriched_days)} days")
     log("== thumbnails")
     redrawn = upgrade_thumbs(fetcher, rows, today) | refresh_days | enriched_days

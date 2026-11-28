@@ -618,10 +618,22 @@ def product_of(members: list[dict[str, str]], aliases: Aliases, rate: float, tod
             and (bool(m.get("adult")) or m.get("rating", "") in ("观感谨慎+", "观感谨慎", "观感成熟"))
         )
 
-    for skip_censored in (True, False):
+    def is_uncensored_source(m: dict[str, str]) -> bool:
+        u = (m.get("image_url") or "").lower()
+        return "ape-insight.jp/" in u or "topgkstore.com/" in u
+
+    # Prefer official uncensored full-body photos first, then normal retail full-body, and
+    # leave un-enriched HPOI face-crop covers as a last resort.
+    for tier in (0, 1, 2):
         for src in IMAGE_FROM:
             m = by_source.get(src)
-            if not m or (skip_censored and is_censored_hpoi(m)):
+            if not m:
+                continue
+            censored = is_censored_hpoi(m)
+            uncensored = is_uncensored_source(m)
+            if tier == 0 and not uncensored:
+                continue
+            if tier == 1 and censored:
                 continue
             thumb = m.get("thumb")
             if thumb and (ROOT / thumb).is_file():
@@ -630,15 +642,18 @@ def product_of(members: list[dict[str, str]], aliases: Aliases, rate: float, tod
         if "img" in item:
             break
     gal_urls = []
-    for skip_censored in (True, False):
+    for tier in (0, 1, 2):
         for src in IMAGE_FROM:
             m = by_source.get(src)
             if not m:
                 continue
             censored = is_censored_hpoi(m)
-            if skip_censored and censored:
+            uncensored = is_uncensored_source(m)
+            if tier == 0 and not uncensored:
                 continue
-            if not skip_censored and (not censored or gal_urls):
+            if tier == 1 and (censored or uncensored):
+                continue
+            if tier == 2 and (not censored or gal_urls):
                 continue
             if m.get("gallery"):
                 gal_urls.extend(u for u in m["gallery"].split("|") if u.startswith("https://"))
