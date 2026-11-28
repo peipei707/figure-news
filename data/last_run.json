@@ -1,9 +1,9 @@
 {
-  "time": "2026-11-28 16:27",
+  "time": "2026-11-28 16:40",
   "sources": {
     "HPOI": {
       "status": "ok",
-      "new": 10,
+      "new": 0,
       "note": ""
     },
     "GoodSmile": {
@@ -43,12 +43,12 @@
     },
     "HobbyGenki": {
       "status": "ok",
-      "new": 7,
+      "new": 0,
       "note": ""
     },
     "NinNinGame": {
       "status": "ok",
-      "new": 20,
+      "new": 0,
       "note": ""
     },
     "Solaris": {
