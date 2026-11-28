@@ -404,7 +404,7 @@ def first_of(members: list[dict[str, str]], field: str) -> str:
 def product_of(members: list[dict[str, str]], aliases: Aliases, rate: float, today: date) -> dict:
     members = sorted(members, key=lambda r: SOURCES.index(r["source"]) if r["source"] in SOURCES else 99)
     by_source = {m["source"]: m for m in reversed(members)}
-    adult = any(m["adult"] for m in members)
+    adult = any(m["adult"] or m.get("rating", "") in ("观感谨慎+", "观感谨慎", "观感成熟") for m in members)
 
     names = uniq(tidy_name(m["name"], m["source"], m["maker"]) for m in members)
     name = names[0] if names else members[0]["id"]
@@ -610,20 +610,39 @@ def product_of(members: list[dict[str, str]], aliases: Aliases, rate: float, tod
         biz["lead"] = lead
     item["biz"] = biz
 
-    for src in IMAGE_FROM:
-        thumb = by_source.get(src, {}).get("thumb")
-        if thumb and (ROOT / thumb).is_file():
-            item["img"] = thumb
+    def is_censored_hpoi(m: dict[str, str]) -> bool:
+        return (
+            m["source"] == "HPOI"
+            and "/gk/cover/" in m.get("image_url", "")
+            and (bool(m.get("adult")) or m.get("rating", "") in ("观感谨慎+", "观感谨慎", "观感成熟"))
+        )
+
+    for skip_censored in (True, False):
+        for src in IMAGE_FROM:
+            m = by_source.get(src)
+            if not m or (skip_censored and is_censored_hpoi(m)):
+                continue
+            thumb = m.get("thumb")
+            if thumb and (ROOT / thumb).is_file():
+                item["img"] = thumb
+                break
+        if "img" in item:
             break
     gal_urls = []
-    for src in IMAGE_FROM:
-        m = by_source.get(src)
-        if not m:
-            continue
-        if m.get("gallery"):
-            gal_urls.extend(u for u in m["gallery"].split("|") if u.startswith("https://"))
-        elif m.get("image_url", "").startswith("https://"):
-            gal_urls.append(m["image_url"])
+    for skip_censored in (True, False):
+        for src in IMAGE_FROM:
+            m = by_source.get(src)
+            if not m:
+                continue
+            censored = is_censored_hpoi(m)
+            if skip_censored and censored:
+                continue
+            if not skip_censored and (not censored or gal_urls):
+                continue
+            if m.get("gallery"):
+                gal_urls.extend(u for u in m["gallery"].split("|") if u.startswith("https://"))
+            elif m.get("image_url", "").startswith("https://"):
+                gal_urls.append(m["image_url"])
     gal_urls = uniq(gal_urls)[:6]
     if gal_urls:
         item["gal"] = gal_urls

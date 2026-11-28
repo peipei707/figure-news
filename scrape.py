@@ -76,8 +76,14 @@ BACKFILL = "旧品补录"
 # HPOI 属性 words that mark an adult-oriented item, and the listing filter that
 # shows only 观感成熟 items. HPOI lists these like any other entry, cover picture
 # included, so they are recorded the same way and carry the mark.
-ADULT_WORDS = ("观感成熟", "R18", "R-18", "18禁", "成人")
+ADULT_WORDS = ("观感成熟", "观感谨慎", "R18", "R-18", "18禁", "成人")
 HPOI_ADULT_FILTER = "r18=315"
+
+
+def is_face_crop_maker(maker: str, name: str = "") -> bool:
+    """Makers whose retail listings put a safe face-only cutout as photo #0 and full-body shots after it."""
+    blob = f"{maker} {name}".lower()
+    return "insight" in blob or any(w in blob for w in ("肉感少女", "肉感美少年", "nikkan shoujo", "nikukan"))
 
 SOURCES = {
     "HPOI": "HPOI",
@@ -589,6 +595,36 @@ def hpoi_stats(soup: BeautifulSoup, it: Item) -> None:
     it.progress = " | ".join(events[:3])
 
 
+def hpoi_official_pics(soup: BeautifulSoup) -> list[str]:
+    """Official gallery photos from HPOI's .swiper-gallery (excluding user photos).
+
+    When photos were uploaded on multiple days, earlier uploads hold the main
+    studio key visuals while later ones are often version charts or bonus items;
+    ordering by upload calendar day puts the main full-body shot first.
+    """
+    imgs = soup.select('.swiper-gallery img[src*="/gk/pic/"]')
+    if not imgs:
+        user_box = soup.select_one("#swiper-userPic")
+        user_imgs = set(user_box.select('img[src*="/gk/pic/"]')) if user_box else set()
+        imgs = [img for img in soup.select('img[src*="/gk/pic/"]') if img not in user_imgs]
+    entries: list[tuple[str, int, str]] = []
+    seen: set[str] = set()
+    for idx, img in enumerate(imgs):
+        raw = img.get("src", "")
+        if not raw:
+            continue
+        day_key = "9999-99-99"
+        m = re.search(r"date=[A-Za-z]{3}\s+([A-Za-z]{3})\s+(\d{1,2})\s+[\d:]+\s+\S+\s+(20\d{2})", raw)
+        if m and m.group(1).lower() in MONTHS:
+            day_key = f"{m.group(3)}-{MONTHS.index(m.group(1).lower()) + 1:02d}-{int(m.group(2)):02d}"
+        clean_u = norm_img_url(raw.split("?", 1)[0].replace("/gk/pic/s/", "/gk/pic/n/"), HPOI_BASE)
+        if clean_u and clean_u not in seen:
+            seen.add(clean_u)
+            entries.append((day_key, idx, clean_u))
+    entries.sort(key=lambda x: (x[0], x[1]))
+    return [u for _, _, u in entries]
+
+
 def hpoi_detail(html: str, it: Item) -> None:
     soup = BeautifulSoup(html, "html.parser")
     hpoi_stats(soup, it)
@@ -600,7 +636,11 @@ def hpoi_detail(html: str, it: Item) -> None:
     it.extra = "；".join(f"{k}：{labels[k]}" for k in ("发行", "原画") if labels.get(k))
     bonus = soup.find(string=re.compile(r"^\s*特典[：:]"))
     it.bonus = clean(re.sub(r"^\s*特典[：:]", "", bonus)) if bonus else ""
+    jan_m = re.search(r"field-keywords(?:=|%3d)(\d{12,14})", html, re.I)
+    if jan_m and int(jan_m.group(1)):
+        it.jan = jan_m.group(1)
     prod = ld_product(soup)
+    cover_url = ""
     if prod:
         info = key_values(prod.get("description", ""))
         it.name = clean(prod.get("name")) or it.name
@@ -610,7 +650,7 @@ def hpoi_detail(html: str, it: Item) -> None:
         it.character = info.get("角色", "")
         it.category = " · ".join(x for x in (clean(prod.get("category")), info.get("系列", "")) if x)
         it.scale = info.get("比例", "") or labels.get("比例", "")
-        it.image_url = norm_img_url(first(prod.get("image")) or "", HPOI_BASE)
+        cover_url = norm_img_url(first(prod.get("image")) or "", HPOI_BASE)
         price_text = info.get("定价", "")
         offer = first(prod.get("offers")) or {}
         it.price = price_digits(offer.get("price")) or price_digits(price_text)
@@ -624,14 +664,18 @@ def hpoi_detail(html: str, it: Item) -> None:
         if any(word in attrs for word in ADULT_WORDS):
             it.adult = "1"
         it.release = month_of(info.get("出货日") or info.get("发售日") or prod.get("releaseDate") or "") or it.release
-    if not it.image_url:
+    if not cover_url:
         cover = soup.select_one('.hpoi-ibox-img img[src], img[src*="/gk/cover/n/"], img[src*="/gk/cover/"]')
-        it.image_url = norm_img_url(cover.get("src", "") if cover else "", HPOI_BASE) or og_image(soup, HPOI_BASE) or norm_img_url(it.thumb_src, HPOI_BASE)
-    pic_urls = [it.image_url] + [
-        norm_img_url(img.get("src", "").replace("/gk/pic/s/", "/gk/pic/n/"), HPOI_BASE)
-        for img in soup.select('img[src*="/gk/pic/"]')
-    ]
-    it.gallery = join_gallery(pic_urls, limit=6)
+        cover_url = norm_img_url(cover.get("src", "") if cover else "", HPOI_BASE) or og_image(soup, HPOI_BASE) or norm_img_url(it.thumb_src, HPOI_BASE)
+    pics = hpoi_official_pics(soup)
+    # HPOI crops mature/cautious /gk/cover/ thumbnails to face close-ups; use full-body
+    # official gallery photos from .swiper-gallery whenever available.
+    if (it.adult or it.rating in ("观感成熟", "观感谨慎", "观感谨慎+")) and pics:
+        it.image_url = pics[0]
+        it.gallery = join_gallery(pics, limit=6)
+    else:
+        it.image_url = cover_url or (pics[0] if pics else "")
+        it.gallery = join_gallery([it.image_url, *pics], limit=6)
     if not it.channel:
         it.channel = infer_channel("HPOI", f"{it.name} {labels.get('属性', '')} {it.extra}", it.status)
 
@@ -924,6 +968,9 @@ def solaris_list(text: str) -> list[Item]:
         franchise, head = meta("franchise"), parts[0] if len(parts) > 1 else ""
         series = head if head and (not franchise or franchise.lower() in head.lower()) else franchise
         p_imgs = [norm_img_url(im.get("src", "")) for im in (p.get("images") or []) if isinstance(im, dict) and im.get("src")]
+        if is_face_crop_maker(maker, title) and len(p_imgs) >= 2:
+            p_imgs = p_imgs[1:]
+        primary_img = p_imgs[0] if p_imgs else norm_img_url(image.get("src") if isinstance(image, dict) else "")
         grams = offer.get("grams") or 0
         weight = parse_weight(f"{grams} g") if isinstance(grams, (int, float)) and grams >= 20 else ""
         stock_note = ""
@@ -938,11 +985,12 @@ def solaris_list(text: str) -> list[Item]:
             price=str(round(float(price.group(0)))) if price else "", currency="USD" if price else "",
             status="预订中" if early and early.get("available") else "现货" if offer.get("available") else "预订已满",
             adult="1" if adult else "",
+            image_url=primary_img,
             gallery=join_gallery(p_imgs, limit=6),
             weight=weight,
             stock_note=stock_note,
             channel=infer_channel("Solaris", title + " " + " ".join(tags)),
-            thumb_src=norm_img_url(image.get("src") if isinstance(image, dict) else ""),
+            thumb_src=primary_img,
         ))
     return items
 
@@ -959,15 +1007,30 @@ def solaris_cdn_url(url: str) -> str:
 def solaris_detail(html: str, it: Item) -> None:
     soup = BeautifulSoup(html, "html.parser")
     prod = ld_product(soup)
+    face_crop = is_face_crop_maker(it.maker, it.name)
     if prod:
         code = clean(str(prod.get("gtin14") or prod.get("gtin13") or prod.get("gtin") or prod.get("sku") or ""))
         code = code[1:] if re.fullmatch(r"0\d{13}", code) else code
         it.jan = code if re.fullmatch(r"\d{8,14}", code) else ""
+        it.maker = it.maker or name_of(prod.get("brand"))
+        face_crop = is_face_crop_maker(it.maker, it.name)
         image = first(prod.get("image"))
-        if isinstance(image, str):
+        if isinstance(image, str) and not (face_crop and it.image_url):
             normed = norm_img_url(image)
             it.image_url = solaris_cdn_url(normed) or normed
-        it.maker = it.maker or name_of(prod.get("brand"))
+    gal = []
+    raw_imgs = prod.get("image") if isinstance(prod.get("image"), list) else ([prod.get("image")] if prod.get("image") else [])
+    for u in raw_imgs:
+        if isinstance(u, str):
+            nu = norm_img_url(u)
+            gal.append(solaris_cdn_url(nu) or nu)
+    for img in soup.select("img[src*='/cdn/shop/files/'], img[src*='cdn.shopify.com/s/files/']"):
+        nu = norm_img_url(img.get("src", ""))
+        gal.append(solaris_cdn_url(nu) or nu)
+    gal = list(dict.fromkeys(u for u in gal if u))
+    if face_crop and len(gal) >= 2 and not it.gallery:
+        gal = gal[1:]
+        it.image_url = gal[0]
     if not it.image_url:
         og = og_image(soup, it.url)
         it.image_url = norm_img_url(it.thumb_src) or solaris_cdn_url(og) or og
@@ -979,15 +1042,6 @@ def solaris_detail(html: str, it: Item) -> None:
     scale = re.search(r"(?<![\d/])1/\d+(?!\d)", it.name)
     it.scale = scale.group(0) if scale else ""
     if not it.gallery:
-        gal = []
-        raw_imgs = prod.get("image") if isinstance(prod.get("image"), list) else ([prod.get("image")] if prod.get("image") else [])
-        for u in raw_imgs:
-            if isinstance(u, str):
-                nu = norm_img_url(u)
-                gal.append(solaris_cdn_url(nu) or nu)
-        for img in soup.select("img[src*='/cdn/shop/files/'], img[src*='cdn.shopify.com/s/files/']"):
-            nu = norm_img_url(img.get("src", ""))
-            gal.append(solaris_cdn_url(nu) or nu)
         it.gallery = join_gallery([it.image_url, *gal], limit=6)
     if not it.weight:
         wt = re.search(r"Weight\s+([\d.,]+\s*(?:g|kg))", text, re.I)
@@ -1489,6 +1543,7 @@ def hobbygenki_detail(html: str, it: Item) -> None:
 
 NIN_BASE = "https://www.nin-nin-game.com/"
 NIN_LIST = "https://www.nin-nin-game.com/en/figures"
+NIN_ADULT_LIST = "https://www.nin-nin-game.com/en/plus18-figures"
 
 
 def ninningame_list(html: str) -> list[Item]:
@@ -1519,6 +1574,7 @@ def ninningame_list(html: str) -> list[Item]:
 def ninningame_detail(html: str, it: Item) -> None:
     soup = BeautifulSoup(html, "html.parser")
     prod = ld_product(soup)
+    ld_gal: list[str] = []
     if prod:
         it.name = clean(prod.get("name")) or it.name
         it.maker = name_of(prod.get("brand")) or it.maker
@@ -1526,15 +1582,30 @@ def ninningame_detail(html: str, it: Item) -> None:
         if re.fullmatch(r"\d{8,14}", code):
             it.jan = code
         raw_imgs = prod.get("image") if isinstance(prod.get("image"), list) else ([prod.get("image")] if prod.get("image") else [])
-        gal = [norm_img_url(u, NIN_BASE) for u in raw_imgs if isinstance(u, str)]
-        if gal:
-            it.image_url = gal[0]
-            it.gallery = join_gallery(gal, limit=6)
+        ld_gal = [norm_img_url(u, NIN_BASE) for u in raw_imgs if isinstance(u, str)]
         offer = first(prod.get("offers")) or {}
         raw_price = re.search(r"\d+(?:\.\d+)?", str(offer.get("price") or "").replace(",", ""))
         if raw_price:
             it.price = str(round(float(raw_price.group(0))))
             it.currency = currency_of(offer.get("priceCurrency")) or "USD"
+    # Full-resolution product gallery sits in #thumbs_list a[href]; for face-crop makers
+    # like Insight, ld+json's image ID is the store's safe face cutout cover, so drop that ID
+    # and pick the first full-body studio photo instead.
+    thumbs_gal = [norm_img_url(a.get("href", ""), NIN_BASE) for a in soup.select("#thumbs_list a[href]")]
+    thumbs_gal = list(dict.fromkeys(u for u in thumbs_gal if u))
+    if is_face_crop_maker(it.maker, it.name) and len(thumbs_gal) >= 2:
+        ld_id_m = re.search(r"/(\d+)(?:-[^/]+)?/", ld_gal[0]) if ld_gal else None
+        ld_id = ld_id_m.group(1) if ld_id_m else ""
+        full_gal = [u for u in thumbs_gal if not (ld_id and re.search(rf"/{re.escape(ld_id)}(?:-[^/]+)?/", u))]
+        chosen = full_gal or thumbs_gal
+        it.image_url = chosen[0]
+        it.gallery = join_gallery(chosen, limit=6)
+    elif thumbs_gal:
+        it.image_url = ld_gal[0] if ld_gal else thumbs_gal[0]
+        it.gallery = join_gallery([it.image_url, *thumbs_gal], limit=6)
+    elif ld_gal:
+        it.image_url = ld_gal[0]
+        it.gallery = join_gallery(ld_gal, limit=6)
     if not it.image_url:
         it.image_url = og_image(soup, NIN_BASE) or norm_img_url(it.thumb_src, NIN_BASE)
     text = clean(soup.get_text(" "))
@@ -1624,7 +1695,14 @@ def figuya_detail(html: str, it: Item) -> None:
         if re.fullmatch(r"\d{8,14}", code):
             it.jan = code
         raw_imgs = prod.get("image") if isinstance(prod.get("image"), list) else ([prod.get("image")] if prod.get("image") else [])
-        gal = [norm_img_url(u, FIGUYA_BASE) for u in raw_imgs if isinstance(u, str)]
+        ld_gal = [norm_img_url(u, FIGUYA_BASE) for u in raw_imgs if isinstance(u, str)]
+        # Figuya's HTML product gallery (width=300 thumbnails) keeps the full-body hero shot first,
+        # whereas ld+json image[0] can be a cropped close-up detail shot.
+        html_gal = [
+            re.sub(r"/width=\d+,quality=\d+,", "/width=1600,quality=85,", norm_img_url(img.get("src", ""), FIGUYA_BASE))
+            for img in soup.select('img[src*="figuya-media.com/cdn-cgi/image/width=300"]')
+        ]
+        gal = list(dict.fromkeys([*html_gal, *ld_gal]))
         if gal:
             it.image_url = gal[0]
             it.gallery = join_gallery(gal, limit=6)
@@ -1710,7 +1788,7 @@ SOURCE_DEFS = [
     Source("Sofmap", [[SOFMAP_LIST.format(page=p) for p in (1, 2)]], sofmap_list, sofmap_detail, newest_first=True,
            details=False),
     Source("HobbyGenki", [[GENKI_LIST]], hobbygenki_list, hobbygenki_detail, newest_first=True),
-    Source("NinNinGame", [[NIN_LIST]], ninningame_list, ninningame_detail, newest_first=True),
+    Source("NinNinGame", [[NIN_LIST], [NIN_ADULT_LIST]], ninningame_list, ninningame_detail, newest_first=True),
     Source("Solaris", [[SOLARIS_LIST.format(page=p) for p in (1, 2)]], solaris_list, solaris_detail, newest_first=True),
     Source("Figuya", [[FIGUYA_LIST]], figuya_list, figuya_detail, newest_first=True),
 ]
@@ -1731,7 +1809,7 @@ def list_new(src: Source, fetcher: Fetcher, known: set[tuple[str, str]]) -> list
                 elif count != total:  # the site answered with a different result set
                     break
             listed = src.parse_list(html)
-            if HPOI_ADULT_FILTER in url:  # known adult before the detail page says so
+            if HPOI_ADULT_FILTER in url or url == NIN_ADULT_LIST:  # known adult before the detail page says so
                 for it in listed:
                     it.adult = "1"
             ids = [it.id for it in listed]
@@ -1753,16 +1831,19 @@ def thumb_file(source: str, item_id: str) -> Path:
     return THUMB_DIR / source / (re.sub(r"[^A-Za-z0-9_-]", "_", item_id) + ".webp")
 
 
-def save_thumb(fetcher: Fetcher, it: Item) -> None:
+def save_thumb(fetcher: Fetcher, it: Item, force: bool = False) -> bool:
     """Save the item's picture, scaled to fit THUMB_BOX, as thumbs/<source>/<id>.webp.
 
     The product page's own picture comes first: it is larger and usually shows
-    the whole figure. The listing's small picture is the fallback.
+    the whole figure. The listing's small picture is the fallback. Returns True
+    when a fresh thumbnail file was written.
     """
     dest = thumb_file(it.source, it.id)
-    if not dest.exists():
+    wrote = False
+    if force or not dest.exists():
         parts = urlparse(it.url)
-        referer = f"{parts.scheme}://{parts.netloc}/" if parts.scheme and parts.netloc else None
+        site_referer = f"{parts.scheme}://{parts.netloc}/" if parts.scheme and parts.netloc else None
+        site_domain = parts.netloc.lower().removeprefix("www.")
         urls = []
         for raw in (it.image_url, it.thumb_src):
             u = norm_img_url(raw)
@@ -1774,7 +1855,14 @@ def save_thumb(fetcher: Fetcher, it: Item) -> None:
             urls.append(u)
         for url in dict.fromkeys(urls):
             try:
-                img = Image.open(io.BytesIO(fetcher.image(url, referer=referer)))
+                img_host = urlparse(url).netloc.lower()
+                if img_host.endswith("hpoi.net"):
+                    ref = HPOI_BASE
+                elif site_domain and img_host.endswith(site_domain):
+                    ref = site_referer
+                else:
+                    ref = None
+                img = Image.open(io.BytesIO(fetcher.image(url, referer=ref)))
                 if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
                     rgba = img.convert("RGBA")
                     img = Image.new("RGB", rgba.size, "white")
@@ -1785,12 +1873,15 @@ def save_thumb(fetcher: Fetcher, it: Item) -> None:
                 img.save(dest, "WEBP", quality=THUMB_QUALITY, method=6)
                 if not it.image_url:
                     it.image_url = url
+                wrote = True
                 break
             except Exception as exc:  # a missing thumbnail is not worth failing the item over
                 log(f"   thumbnail {it.source} {it.id}: {type(exc).__name__}: {exc}")
         else:
-            return
+            if not dest.exists():
+                return False
     it.thumb = dest.relative_to(ROOT).as_posix()
+    return wrote
 
 
 def upgrade_thumbs(fetcher: Fetcher, rows: list[dict[str, str]], today: date) -> set[str]:
@@ -1887,14 +1978,117 @@ def stats_due(row: dict[str, str], today: date) -> bool:
     return read_at < reached[-1]
 
 
+def is_censored_hpoi_row(row: dict[str, str]) -> bool:
+    """True when an HPOI mature/cautious row still uses HPOI's cropped /gk/cover/ face thumbnail."""
+    return (
+        row["source"] == "HPOI"
+        and "/gk/cover/" in row.get("image_url", "")
+        and (bool(row.get("adult")) or row.get("rating", "") in ("观感谨慎+", "观感谨慎", "观感成熟"))
+    )
+
+
+def _shopify_full_images(fetcher: Fetcher, host: str, handle: str, maker_hint: str = "") -> list[str]:
+    """Fetch a Shopify product's full-resolution gallery URLs, skipping face cutouts when needed."""
+    raw = fetcher.text(f"https://{host}/products/{handle}.json")
+    prod = json.loads(raw).get("product") or {}
+    imgs = [norm_img_url(im.get("src", "")) for im in (prod.get("images") or []) if isinstance(im, dict) and im.get("src")]
+    vendor = clean(prod.get("vendor")) or maker_hint
+    title = clean(prod.get("title"))
+    if is_face_crop_maker(vendor, title) and len(imgs) >= 2:
+        imgs = imgs[1:]
+    return imgs
+
+
+def enrich_censored_hpoi(fetcher: Fetcher, rows: list[dict[str, str]], today: date,
+                         max_lookups: int = 15) -> set[str]:
+    """Replace HPOI's cropped /gk/cover/ thumbnails on mature/cautious items with full-body photos.
+
+    1. Reuse full-body photos from any non-HPOI row in rows sharing the same JAN.
+    2. Look up remaining JAN-bearing items on Solaris Japan (robots-allowed Shopify suggest API).
+    3. Look up remaining Chinese/indie studio items on open Shopify PVC stores with strict matching.
+    """
+    donor_rank = ("Native", "GoodSmile", "KDcolle", "MegaHobby", "TokyoFigure",
+                  "Solaris", "NinNinGame", "HobbyGenki", "Figuya", "Sofmap", "HLJ")
+    donors_by_jan: dict[str, dict[str, str]] = {}
+    for src in donor_rank:
+        for r in rows:
+            if r["source"] == src and re.fullmatch(r"\d{8,14}", r["jan"]) and r["image_url"]:
+                donors_by_jan.setdefault(r["jan"], r)
+
+    stop_tokens = {"scale", "figure", "statue", "ver", "version", "studio", "pvc", "abs", "resin",
+                   "limited", "edition", "original", "model", "licensed", "bonus", "regular", "deluxe"}
+    redrawn: set[str] = set()
+    lookups = 0
+    targets = [r for r in sorted(rows, key=lambda r: r["first_seen"], reverse=True)
+               if is_censored_hpoi_row(r) and 0 <= age_days(r, today) <= 30]
+    for row in targets:
+        imgs: list[str] = []
+        jan = row.get("jan", "")
+        donor = donors_by_jan.get(jan) if jan else None
+        if donor:
+            imgs = [u for u in donor.get("gallery", "").split("|") if u] or ([donor["image_url"]] if donor["image_url"] else [])
+        if not imgs and re.fullmatch(r"\d{12,14}", jan) and lookups < max_lookups:
+            lookups += 1
+            try:
+                data = json.loads(fetcher.text(f"https://solarisjapan.com/search/suggest.json?q={jan}&resources[type]=product"))
+                prods = data.get("resources", {}).get("results", {}).get("products") or []
+                if prods and prods[0].get("handle"):
+                    imgs = _shopify_full_images(fetcher, "solarisjapan.com", prods[0]["handle"], row.get("maker", ""))
+            except Blocked:
+                pass
+            except Exception as exc:
+                log(f"   enrich Solaris {row['id']} ({jan}): {type(exc).__name__}: {exc}")
+        if not imgs and lookups < max_lookups and row.get("maker"):
+            maker_en = re.findall(r"[A-Za-z][A-Za-z0-9-]{2,}", row["maker"])
+            title_tokens = [
+                w.lower() for w in re.findall(r"[A-Za-z]{4,}", f"{row.get('name_alt', '')} {row.get('character', '')} {row.get('name', '')}")
+                if w.lower() not in stop_tokens and w.lower() not in {m.lower() for m in maker_en}
+            ]
+            if maker_en and title_tokens:
+                q_maker = maker_en[0]
+                scale = row.get("scale", "")
+                for host in ("mumujoytoyshop.com", "www.yesgk.com"):
+                    if imgs or lookups >= max_lookups:
+                        break
+                    lookups += 1
+                    try:
+                        data = json.loads(fetcher.text(f"https://{host}/search/suggest.json?q={q_maker}&resources[type]=product"))
+                        prods = data.get("resources", {}).get("results", {}).get("products") or []
+                        for p in prods:
+                            ptitle = (p.get("title") or "").lower()
+                            if q_maker.lower() not in ptitle:
+                                continue
+                            if scale and scale.startswith("1/") and re.search(r"1/\d+", ptitle) and scale not in ptitle:
+                                continue
+                            if any(tok in ptitle for tok in title_tokens):
+                                imgs = _shopify_full_images(fetcher, host, p["handle"], row["maker"])
+                                if imgs:
+                                    break
+                    except Blocked:
+                        continue
+                    except Exception as exc:
+                        log(f"   enrich {host} {row['id']}: {type(exc).__name__}: {exc}")
+        if imgs:
+            row["image_url"] = imgs[0]
+            row["gallery"] = join_gallery(imgs, limit=6)
+            it = Item(**{k: row.get(k, "") for k in CSV_FIELDS})
+            if save_thumb(fetcher, it, force=True):
+                row["thumb"] = it.thumb
+                redrawn.add(row["first_seen"])
+                log(f"   full-body {row['source']} {row['id']} {row['name'][:40]} -> {imgs[0][:70]}")
+    return redrawn
+
+
 def refresh_rows(fetcher: Fetcher, rows: list[dict[str, str]], pick: Callable[[dict[str, str]], bool],
-                 today: date) -> int:
+                 today: date) -> tuple[int, set[str]]:
     """Read the detail page of each picked row again and keep what it now says."""
     done = 0
+    redrawn: set[str] = set()
     refused: set[str] = set()  # a source that says no is left alone for the rest of the run
     for row in rows:
         if row["source"] in refused or not pick(row):
             continue
+        prev_img = row.get("image_url", "")
         it = Item(**{k: row.get(k, "") for k in CSV_FIELDS})
         try:
             SOURCE_BY_KEY[row["source"]].parse_detail(fetcher.text(it.url), it)
@@ -1908,11 +2102,21 @@ def refresh_rows(fetcher: Fetcher, rows: list[dict[str, str]], pick: Callable[[d
         if row["source"] == "HPOI":
             it.stats_date = today.isoformat()
         fresh = it.row()
+        # Preserve an already-enriched full-body external image when HPOI itself only has /gk/cover/.
+        if (row["source"] == "HPOI" and prev_img and "/gk/cover/" not in prev_img
+                and "/gk/cover/" in fresh.get("image_url", "")):
+            fresh["image_url"] = prev_img
+            fresh["gallery"] = row.get("gallery", "")
         for key in DETAIL_FIELDS:
             if fresh[key]:
                 row[key] = fresh[key]
+        if fresh["image_url"] and fresh["image_url"] != prev_img:
+            it_img = Item(**{k: row.get(k, "") for k in CSV_FIELDS})
+            if save_thumb(fetcher, it_img, force=True):
+                row["thumb"] = it_img.thumb
+                redrawn.add(row["first_seen"])
         done += 1
-    return done
+    return done, redrawn
 
 
 # --------------------------------------------------------------------------
@@ -2110,13 +2314,19 @@ def main() -> int:
             # A rerun's page says when it ships. Rows without that month are read again during their
             # first week: it fills in rows saved before the month was parsed, and late additions.
             return "再贩" in row["status"] and not row["release"] and 0 <= age_days(row, today) <= 7
+        if row["source"] == "HPOI" and is_censored_hpoi_row(row) and not row["jan"] and 0 <= age_days(row, today) <= 14:
+            return True
         # Popularity grows after an announcement, so HPOI items are read again a few days on.
         return row["source"] == "HPOI" and row["status"] != BACKFILL and stats_due(row, today)
 
     log("== refresh")
-    log(f"   {refresh_rows(fetcher, rows, pick, today)} items re-read")
+    refreshed, refresh_days = refresh_rows(fetcher, rows, pick, today)
+    log(f"   {refreshed} items re-read")
+    log("== full-body enrich")
+    enriched_days = enrich_censored_hpoi(fetcher, rows, today)
+    log(f"   full-body pictures updated on {len(enriched_days)} days")
     log("== thumbnails")
-    redrawn = upgrade_thumbs(fetcher, rows, today)
+    redrawn = upgrade_thumbs(fetcher, rows, today) | refresh_days | enriched_days
     log(f"   larger pictures saved for items first seen on {len(redrawn)} days")
     save_rows(rows)
     last_run = {"time": now.strftime("%Y-%m-%d %H:%M"), "sources": status}
