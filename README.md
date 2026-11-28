@@ -2,7 +2,7 @@
 
 每天清晨（北京时间）自动抓一次 HPOI、Good Smile 官网、Native 官网、MegaHouse 官网、KDcolle 官网、Tokyo Figure、Sofmap、HLJ、Hobby-Genki、Nin-Nin-Game、Solaris Japan、Figuya 共 12 个网站的新品和商品图片，按天汇总成表。
 
-**最新一期：[2026-11-28](daily/2026-11-28.md)（31 件）**
+**最新一期：[2026-11-28](daily/2026-11-28.md)（68 件）**
 
 **公开网页：[https://peipei707.github.io/figure-news/](https://peipei707.github.io/figure-news/)**（GitHub Pages，每天抓取后自动更新，最近 30 天）
 
@@ -10,26 +10,26 @@
 
 ## 上次运行
 
-2026-11-28 09:31（北京时间）
+2026-11-28 16:27（北京时间）
 
 | 来源 | 结果 | 新增 | 备注 |
 |---|---|---|---|
-| HPOI | ✅ 正常 | 25 |  |
+| HPOI | ✅ 正常 | 10 |  |
 | Good Smile 官网 | ✅ 正常 | 0 |  |
 | Native 官网 | ✅ 正常 | 0 |  |
 | MegaHouse 官网 | ✅ 正常 | 0 |  |
 | KDcolle 官网 | ✅ 正常 | 0 |  |
 | Tokyo Figure | ✅ 正常 | 0 |  |
-| Sofmap | ✅ 正常 | 5 |  |
+| Sofmap | ✅ 正常 | 0 |  |
 | HLJ | ✅ 正常 | 0 |  |
-| Hobby-Genki | ✅ 正常 | 0 |  |
-| Nin-Nin-Game | ✅ 正常 | 1 |  |
+| Hobby-Genki | ✅ 正常 | 7 |  |
+| Nin-Nin-Game | ✅ 正常 | 20 |  |
 | Solaris Japan | ✅ 正常 | 0 |  |
 | Figuya | ✅ 正常 | 0 |  |
 
 ## 最近 30 天
 
-- [2026-11-28](daily/2026-11-28.md) · 31 件
+- [2026-11-28](daily/2026-11-28.md) · 68 件
 - [2026-11-27](daily/2026-11-27.md) · 286 件
 - [2026-11-26](daily/2026-11-26.md) · 32 件
 - [2026-11-25](daily/2026-11-25.md) · 71 件
